@@ -1,0 +1,25 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Project exclude paths
+/core/common/build/
+/core/common/build/classes/kotlin/main/
+/core/common/build/classes/kotlin/test/
+/core/mesh/build/
+/core/mesh/build/classes/kotlin/main/
+/core/mesh/build/classes/kotlin/test/
+/core/model/build/
+/core/model/build/classes/kotlin/main/
