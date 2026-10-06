@@ -25,6 +25,11 @@ class MainActivity : ComponentActivity() {
         setContent { MaterialTheme { EchoScreen(onStart = ::requestAndStart, onStop = ::stopMesh) } }
     }
 
+    override fun onStart() {
+        super.onStart()
+        EchoController.clearStaleMessages()
+    }
+
     /** Quyền bắt buộc theo phiên bản Android. */
     private fun requiredPermissions(): List<String> =
         if (Build.VERSION.SDK_INT >= 31) {

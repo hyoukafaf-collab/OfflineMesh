@@ -85,17 +85,26 @@ class BleSpike(private val ctx: Context, private val log: MeshLog) : EchoControl
     }
 
     // ---------- vòng đời ----------
-    fun start() {
+    /**
+     * Gọi ở MỖI lần người dùng bấm Bắt đầu: đọc lại trạng thái Bluetooth/Vị trí ngay lúc đó
+     * (không theo dõi định kỳ để tiết kiệm pin). Trả false và hiện lỗi nếu chưa chạy được.
+     */
+    fun start(): Boolean {
         val ad = adapter
-        if (ad == null || !ad.isEnabled) { fail("Bluetooth đang tắt hoặc không có"); return }
+        val btState = if (ad == null) "không có" else if (ad.isEnabled) "bật" else "tắt"
+        i("start_requested", "bluetooth=$btState sdk=${Build.VERSION.SDK_INT}")
+        ui.update { it.copy(error = null, result = "", progress = "") }
+        if (ad == null) { fail("Máy này không có Bluetooth"); return false }
+        if (!ad.isEnabled) { fail("Bluetooth đang tắt: hãy bật Bluetooth rồi bấm Bắt đầu lại"); return false }
         if (Build.VERSION.SDK_INT < 31) {
             val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
             if (!LocationManagerCompat.isLocationEnabled(lm)) {
-                fail("Android 11 trở xuống cần bật Vị trí (GPS) để quét BLE"); return
+                fail("Android 11 trở xuống cần bật Vị trí (GPS) để quét BLE")
+                return false
             }
         }
         val s = mgr.openGattServer(ctx, serverCb)
-        if (s == null) { fail("openGattServer trả về null"); return }
+        if (s == null) { fail("openGattServer trả về null"); return false }
         server = s
 
         val svc = BluetoothGattService(BleConstants.SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
@@ -121,6 +130,7 @@ class BleSpike(private val ctx: Context, private val log: MeshLog) : EchoControl
         s.addService(svc)
         i("start", "self=$selfHex sdk=${Build.VERSION.SDK_INT} model=${Build.MODEL}")
         ui.update { it.copy(running = true, selfId = selfHex, error = null) }
+        return true
     }
 
     fun stop() {
@@ -270,7 +280,7 @@ class BleSpike(private val ctx: Context, private val log: MeshLog) : EchoControl
                 i("link_connected", peer = pendingPeer)
                 gatt.requestMtu(BleConstants.MTU_REQUEST)
             } else {
-                // status 133 loi GATT chung rất hay gặp; log lại rồi dọn sạch để thử nối lại.
+                // status 133 là lỗi GATT chung rất hay gặp; log lại rồi dọn sạch để thử nối lại.
                 w("link_down", "status=$status state=$newState", pendingPeer)
                 test?.abort("link đứt")
                 gatt.close()

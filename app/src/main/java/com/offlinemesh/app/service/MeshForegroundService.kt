@@ -31,11 +31,16 @@ class MeshForegroundService : Service() {
         } else {
             startForeground(1, n)
         }
-        if (spike == null) {
-            spike = BleSpike(this, AppLog.log).also {
-                EchoController.commands = it
-                it.start()
-            }
+        // Mỗi lần bấm Bắt đầu đều khởi động lại sạch để kiểm tra lại Bluetooth, không dùng lại trạng thái cũ.
+        spike?.stop()
+        spike = null
+        EchoController.commands = null
+        val fresh = BleSpike(this, AppLog.log)
+        if (fresh.start()) {
+            spike = fresh
+            EchoController.commands = fresh
+        } else {
+            stopSelf()   // start() đã hiện lỗi trên giao diện; không giữ dịch vụ nền vô ích
         }
         return START_NOT_STICKY
     }

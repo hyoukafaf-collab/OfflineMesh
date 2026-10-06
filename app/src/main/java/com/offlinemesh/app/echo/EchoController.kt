@@ -40,6 +40,9 @@ object EchoController {
 
     fun setLogTail(lines: List<String>) = update { it.copy(logTail = lines) }
 
+    /** Lỗi của lần thử trước không còn đúng nữa (ví dụ người dùng vừa bật Bluetooth); chỉ xóa khi không chạy. */
+    fun clearStaleMessages() = update { if (it.running) it else it.copy(error = null, result = "", progress = "") }
+
     fun connect(peer: String) { commands?.connect(peer) }
     fun runEcho(frames: Int) { commands?.runEcho(frames) }
 }
