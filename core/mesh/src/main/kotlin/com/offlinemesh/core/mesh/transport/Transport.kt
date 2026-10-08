@@ -15,8 +15,11 @@ interface TransportListener {
 interface Transport {
     val selfId: PeerId
 
-    /** Kích thước tối đa của một khung gửi qua send(). */
+    /** Cận trên kích thước một khung gửi qua send(). */
     val maxFrame: Int
+
+    /** Kích thước khung tối đa dùng được với peer này (MTU mỗi liên kết khác nhau). */
+    fun frameSize(peer: PeerId): Int = maxFrame
 
     fun start(listener: TransportListener)
     fun stop()

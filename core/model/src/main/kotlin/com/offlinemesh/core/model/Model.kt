@@ -13,11 +13,17 @@ value class PeerId(val hex: String) {
     override fun toString(): String = short()
 }
 
-/** Số nhỏ = ưu tiên cao hơn khi chọn bundle để relay. */
-enum class Priority(val rank: Int) { SOS(0), TEXT(1), IMAGE(2), VIDEO(3) }
+/** Loại tin. rank nhỏ = ưu tiên cao hơn; code là số cố định trên đường truyền (không đổi khi đổi rank). */
+enum class Kind(val rank: Int, val code: Int) {
+    ACK(0, 0), SOS(1, 1), TEXT(2, 2), IMAGE(3, 3), VIDEO(4, 4);
+
+    companion object {
+        fun fromCode(c: Int): Kind? = values().firstOrNull { it.code == c }
+    }
+}
 
 /** Mã lỗi cố định, dùng trong log thay cho chuỗi tự do. */
 enum class ErrorCode {
     UNKNOWN, LINK_TIMEOUT, LINK_LOST, HANDSHAKE_VERSION, BAD_SIGNATURE, BAD_HASH,
-    FRAGMENT_MISSING, CACHE_FULL, EXPIRED, HOP_LIMIT, ILLEGAL_TRANSITION,
+    FRAGMENT_MISSING, CACHE_FULL, EXPIRED, HOP_LIMIT, ILLEGAL_TRANSITION, BAD_FORMAT,
 }

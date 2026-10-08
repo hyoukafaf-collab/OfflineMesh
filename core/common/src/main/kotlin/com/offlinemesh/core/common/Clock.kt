@@ -10,4 +10,5 @@ object WallClock : Clock {
 class FakeClock(private var t: Long = 0L) : Clock {
     override fun nowMs(): Long = t
     fun advance(ms: Long) { t += ms }
+    fun set(ms: Long) { t = ms }
 }

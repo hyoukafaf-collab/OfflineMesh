@@ -31,6 +31,8 @@ class MeshForegroundService : Service() {
         } else {
             startForeground(1, n)
         }
+        // Hai chế độ dùng chung dịch vụ GATT nên không chạy cùng lúc.
+        stopService(Intent(this, MeshService::class.java))
         // Mỗi lần bấm Bắt đầu đều khởi động lại sạch để kiểm tra lại Bluetooth, không dùng lại trạng thái cũ.
         spike?.stop()
         spike = null
