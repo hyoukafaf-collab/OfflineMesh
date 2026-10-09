@@ -45,6 +45,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(project(":core:mesh"))
+    implementation("com.google.zxing:core:3.5.3")                          // vẽ mã QR
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0") // quét QR, không cần quyền camera
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
