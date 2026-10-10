@@ -229,7 +229,7 @@ class BleTransport(
     private fun writeNoResponse(g: BluetoothGatt, ch: BluetoothGattCharacteristic, data: ByteArray): Boolean =
         if (Build.VERSION.SDK_INT >= 33) {
             g.writeCharacteristic(ch, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) ==
-                    BluetoothStatusCodes.SUCCESS
+                BluetoothStatusCodes.SUCCESS
         } else {
             ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
             ch.value = data

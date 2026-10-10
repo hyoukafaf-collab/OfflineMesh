@@ -14,6 +14,7 @@ import com.offlinemesh.core.mesh.link.LinkSession
 import com.offlinemesh.core.mesh.link.LinkState
 import com.offlinemesh.core.mesh.routing.Defaults
 import com.offlinemesh.core.mesh.routing.KindDefaults
+import com.offlinemesh.core.mesh.routing.Limits
 import com.offlinemesh.core.mesh.routing.DefaultPolicy
 import com.offlinemesh.core.mesh.routing.ForwardingPolicy
 import com.offlinemesh.core.mesh.store.BundleStore
@@ -97,6 +98,9 @@ class MeshNode(
 
     /** Tạo và đưa một tin vào hộp đi. dst = null nghĩa là broadcast. */
     fun send(dst: PeerId?, kind: Kind, payload: ByteArray, copies: Int? = null, lifetimeMs: Long? = null): BundleId {
+        require(payload.size <= Limits.maxPayload(kind)) {
+            "Tin $kind dài ${payload.size} byte, tối đa ${Limits.maxPayload(kind)} byte"
+        }
         val d = defaultsFor(kind)
         val life = lifetimeMs ?: d.lifetimeMs
         val l = copies ?: d.copies
@@ -205,7 +209,7 @@ class MeshNode(
         val items = store.all()
             .filter {
                 it.core.id !in e.peerSeen && !it.isExpired(now) &&
-                        policy.decide(it, e.peer, now) != null && ackUseful(it, e.peerSeen)
+                    policy.decide(it, e.peer, now) != null && ackUseful(it, e.peerSeen)
             }
             .sortedWith(compareBy<StoredBundle>({ if (it.core.dst == e.peer) 0 else 1 }, { it.core.kind.rank }, { it.core.size }))
             .map { OfferItem(it.core.id, it.core.kind, it.core.dst, it.core.size, it.remainingMs(now)) }
@@ -247,6 +251,7 @@ class MeshNode(
         advance(e, LinkState.TRANSFER, "nhận tin")
         val now = clock.nowMs()
         val c = w.core
+        if (c.size > Limits.maxWire(c.kind)) { reject(c, e, ErrorCode.TOO_LARGE); return }   // chặn tin quá khổ trước mọi việc
         if (BundleIds.of(c) != c.id) { reject(c, e, ErrorCode.BAD_HASH); return }
         if (store.isSeen(c.id)) { stats.duplicates++; return }          // rẻ hơn kiểm chữ ký, nên làm trước
         if (!verifier.verify(c)) { reject(c, e, ErrorCode.BAD_SIGNATURE); return }

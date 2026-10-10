@@ -17,7 +17,7 @@ class ContactCard(val name: String, val signPub: ByteArray, val encPub: ByteArra
             .joinToString("") { "%02X".format(it) }.chunked(4).joinToString(" ")
 
     fun encode(): String {
-        val n = name.toByteArray(Charsets.UTF_8).let { if (it.size > MAX_NAME) it.copyOf(MAX_NAME) else it }
+        val n = DisplayName.clean(name).toByteArray(Charsets.UTF_8)
         val body = byteArrayOf(1, n.size.toByte()) + n + signPub + encPub
         val chk = Sha256.hash(CHK_LABEL, body).copyOf(4)
         return PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(body + chk)
@@ -27,7 +27,7 @@ class ContactCard(val name: String, val signPub: ByteArray, val encPub: ByteArra
 
     companion object {
         const val PREFIX = "OM1:"
-        private const val MAX_NAME = 24
+        private const val MAX_NAME = DisplayName.MAX_BYTES
         private val FP_LABEL = "OfflineMesh/fp/v1".toByteArray()
         private val CHK_LABEL = "OfflineMesh/card/v1".toByteArray()
 
@@ -41,10 +41,12 @@ class ContactCard(val name: String, val signPub: ByteArray, val encPub: ByteArra
             if (nl > MAX_NAME || raw.size != 2 + nl + 66 + 4) return null
             val body = raw.copyOfRange(0, raw.size - 4)
             if (!Sha256.hash(CHK_LABEL, body).copyOf(4).contentEquals(raw.copyOfRange(raw.size - 4, raw.size))) return null
-            val name = String(raw, 2, nl, Charsets.UTF_8)
+            val rawName = String(raw, 2, nl, Charsets.UTF_8)
             val sign = raw.copyOfRange(2 + nl, 2 + nl + 33)
             val enc = raw.copyOfRange(2 + nl + 33, 2 + nl + 66)
             if (!P256.isValidPublic(sign) || !P256.isValidPublic(enc)) return null
+            // Tên do người lạ đặt: làm sạch ký tự điều khiển/đảo chiều chữ, rỗng thì dùng tên theo ID
+            val name = DisplayName.clean(rawName).ifEmpty { DisplayName.fallback(Identity.peerIdOf(sign)) }
             return ContactCard(name, sign, enc)
         }
     }

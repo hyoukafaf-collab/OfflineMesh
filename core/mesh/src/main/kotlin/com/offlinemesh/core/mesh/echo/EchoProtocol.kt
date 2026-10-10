@@ -8,7 +8,7 @@ data class EchoReport(val received: Int, val badCrc: Int, val outOfOrder: Int, v
 
 /**
  * Giao thức thử nghiệm đường truyền (không phải giao thức tin nhắn thật).
- * DATA  : [1][seq:4][crc32(payload):4]  (payload xác định theo seq)
+ * DATA  : [1][seq:4][crc32(payload):4][payload...]  (payload xác định theo seq)
  * END   : [2][tổng số khung đã gửi:4]
  * REPORT: [3][received:4][badCrc:4][outOfOrder:4][bytes:4]
  */

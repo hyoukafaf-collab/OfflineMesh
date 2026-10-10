@@ -75,6 +75,12 @@ fun ContactsScreen() {
             OutlinedTextField(value = pasted, onValueChange = { pasted = it }, label = { Text("Hoặc dán thẻ OM1:...") }, modifier = Modifier.fillMaxWidth())
             Button(onClick = { ContactsController.addFromText(pasted); pasted = "" }, enabled = pasted.isNotBlank()) { Text("Thêm từ văn bản") }
             s.message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+            s.pendingRename?.let { p ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { ContactsController.confirmRename() }) { Text("Đổi thành \"${p.newName}\"") }
+                    Button(onClick = { ContactsController.cancelRename() }) { Text("Giữ tên cũ") }
+                }
+            }
 
             Text("Danh bạ đã ghim khóa:", style = MaterialTheme.typography.titleMedium)
             if (s.contacts.isEmpty()) Text("(trống)")

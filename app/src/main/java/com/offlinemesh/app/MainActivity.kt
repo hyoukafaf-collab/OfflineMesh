@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
     private fun requestThen(action: () -> Unit) {
         afterPermission = action
         val all = requiredPermissions() +
-                if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
+            if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
         askPerms.launch(all.toTypedArray())
     }
 

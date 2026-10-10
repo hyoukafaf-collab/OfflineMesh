@@ -25,7 +25,7 @@ object Framing {
     }
 }
 
-class Reassembler(private val maxPending: Int = 4) {
+class Reassembler(private val maxPending: Int = 4, private val maxFramesPerMessage: Int = 4096) {
     private class Partial(val total: Int) {
         val parts = arrayOfNulls<ByteArray>(total)
         var count = 0
@@ -40,7 +40,7 @@ class Reassembler(private val maxPending: Int = 4) {
         val msgId = bb.short.toInt() and 0xFFFF
         val idx = bb.short.toInt() and 0xFFFF
         val total = bb.short.toInt() and 0xFFFF
-        if (total == 0 || idx >= total) return null
+        if (total == 0 || idx >= total || total > maxFramesPerMessage) return null
         if (!pending.containsKey(msgId) && pending.size >= maxPending) pending.remove(pending.keys.first())
         val p = pending.getOrPut(msgId) { Partial(total) }
         if (p.total != total) { pending.remove(msgId); return null }

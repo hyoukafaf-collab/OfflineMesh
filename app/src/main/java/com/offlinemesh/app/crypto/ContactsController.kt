@@ -6,6 +6,7 @@ import android.os.Build
 import com.offlinemesh.core.mesh.crypto.AddResult
 import com.offlinemesh.core.mesh.crypto.ContactBook
 import com.offlinemesh.core.mesh.crypto.ContactCard
+import com.offlinemesh.core.mesh.crypto.DisplayName
 import com.offlinemesh.core.mesh.crypto.Identity
 import com.offlinemesh.core.model.PeerId
 import java.io.File
@@ -25,11 +26,26 @@ class PrefsContactBook(private val prefs: SharedPreferences) : ContactBook {
 
     override fun remove(peer: PeerId) { map.remove(peer); save() }
 
+    override fun rename(peer: PeerId, newName: String): Boolean {
+        val old = map[peer] ?: return false
+        val n = DisplayName.clean(newName)
+        if (n.isEmpty()) return false
+        map[peer] = ContactCard(n, old.signPub, old.encPub)
+        save()
+        return true
+    }
+
     override fun add(card: ContactCard, self: PeerId): AddResult {
         val id = card.peerId
         if (id == self) return AddResult.IsSelf
         val old = map[id]
-        if (old != null) return if (old.sameKeysAs(card)) AddResult.AlreadyKnown else AddResult.Conflict
+        if (old != null) {
+            return when {
+                !old.sameKeysAs(card) -> AddResult.Conflict
+                old.name == card.name -> AddResult.AlreadyKnown
+                else -> AddResult.NameDiffers(old.name, card.name)
+            }
+        }
         map[id] = card
         save()
         return AddResult.Added
@@ -53,12 +69,16 @@ object IdentityStore {
 
 data class ContactUi(val peer: String, val name: String, val fingerprint: String)
 
+/** Thẻ vừa quét mang tên khác với tên đang lưu (cùng khóa): chờ người dùng quyết định. */
+data class PendingRename(val peer: String, val oldName: String, val newName: String)
+
 data class ContactsUiState(
     val myName: String = "",
     val myCard: String = "",
     val myFingerprint: String = "",
     val contacts: List<ContactUi> = emptyList(),
     val message: String? = null,
+    val pendingRename: PendingRename? = null,
 )
 
 /** Ranh giới giữa giao diện Liên hệ và lõi mật mã. Gọi init() một lần ở Application. */
@@ -86,13 +106,13 @@ object ContactsController {
 
     private fun myName(): String = prefs.getString("my_name", null) ?: Build.MODEL
 
-    private fun refresh(message: String?) {
+    private fun refresh(message: String?, pending: PendingRename? = null) {
         val card = ContactCard(myName(), identity.signPub, identity.encPub)
         synchronized(this) {
             state = ContactsUiState(
                 myName = myName(), myCard = card.encode(), myFingerprint = card.fingerprint(),
                 contacts = book.all().map { ContactUi(it.peerId.hex, it.name, it.fingerprint()) },
-                message = message,
+                message = message, pendingRename = pending,
             )
         }
         listener?.invoke(state)
@@ -103,15 +123,29 @@ object ContactsController {
     fun addFromText(text: String) {
         val card = ContactCard.decode(text)
         if (card == null) { refresh("Thẻ không hợp lệ (sai định dạng, sai mã kiểm tra hoặc khóa hỏng)"); return }
-        refresh(
-            when (book.add(card, identity.peerId)) {
-                AddResult.Added -> "Đã thêm ${card.name}. Hãy đọc mã vân tay cho nhau để chắc chắn: ${card.fingerprint()}"
-                AddResult.AlreadyKnown -> "${card.name} đã có trong danh bạ"
-                AddResult.Conflict -> "CẢNH BÁO: đã có liên hệ cùng ID nhưng khóa khác. Không ghi đè."
-                AddResult.IsSelf -> "Đây là thẻ của chính bạn"
-            },
-        )
+        when (val r = book.add(card, identity.peerId)) {
+            AddResult.Added -> {
+                val dup = if (book.nameTaken(card.name, except = card.peerId)) " Đã có liên hệ khác cùng tên: hãy dựa vào mã vân tay/ID để phân biệt." else ""
+                refresh("Đã thêm ${card.name}. Hãy đọc mã vân tay cho nhau để chắc chắn: ${card.fingerprint()}.$dup")
+            }
+            AddResult.AlreadyKnown -> refresh("${card.name} đã có trong danh bạ")
+            is AddResult.NameDiffers -> refresh(
+                "Liên hệ này đã có (cùng khóa) với tên \"${r.oldName}\", còn thẻ vừa quét mang tên \"${r.newName}\". Khóa không đổi; tên chỉ là nhãn hiển thị.",
+                PendingRename(card.peerId.hex, r.oldName, r.newName),
+            )
+            AddResult.Conflict -> refresh("CẢNH BÁO: đã có liên hệ cùng ID nhưng khóa khác. Không ghi đè.")
+            AddResult.IsSelf -> refresh("Đây là thẻ của chính bạn")
+        }
     }
+
+    /** Người dùng xác nhận đổi nhãn theo thẻ vừa quét. Chỉ đổi tên, khóa đã ghim giữ nguyên. */
+    fun confirmRename() {
+        val p = state.pendingRename ?: return
+        val ok = book.rename(PeerId(p.peer), p.newName)
+        refresh(if (ok) "Đã đổi tên \"${p.oldName}\" thành \"${p.newName}\"" else "Không đổi được tên")
+    }
+
+    fun cancelRename() = refresh("Giữ nguyên tên \"${state.pendingRename?.oldName ?: ""}\"")
 
     fun remove(peer: String) { book.remove(PeerId(peer)); refresh("Đã xóa liên hệ") }
 
