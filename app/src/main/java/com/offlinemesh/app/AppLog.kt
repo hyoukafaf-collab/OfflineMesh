@@ -2,7 +2,6 @@ package com.offlinemesh.app
 
 import android.content.Context
 import android.util.Log
-import com.offlinemesh.app.echo.EchoController
 import com.offlinemesh.app.mesh.MeshController
 import com.offlinemesh.core.common.FileSink
 import com.offlinemesh.core.common.Level
@@ -32,7 +31,6 @@ object AppLog {
         val file = FileSink(File(ctx.filesDir, "mesh.log"))
         val screen = LogSink {
             val lines = ring.snapshot().takeLast(14).map { it.line() }
-            EchoController.setLogTail(lines)
             MeshController.setLogTail(lines)
         }
         log = MeshLog(WallClock, listOf(logcat, ring, file, screen))

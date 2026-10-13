@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.content.ContextCompat
@@ -29,20 +30,41 @@ class MeshService : Service() {
             if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
             val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
             if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
-                MeshController.update { it.copy(error = "Bluetooth đã bị tắt: hãy bật lại rồi bấm Bắt đầu") }
+                // Giao diện tự hiện dòng mờ "Bluetooth đang tắt..." nhờ AppGate (cũng theo sự kiện hệ thống), nên không cần thêm lỗi ở đây.
                 shutdown()
             }
         }
     }
     private var receiverRegistered = false
 
+    // Pin: nhận sự kiện hệ thống khi % pin hoặc trạng thái sạc đổi (không đọc định kỳ nên không tốn pin).
+    private var batteryRegistered = false
+    private var lastPct = -1
+    private var lastCharging = false
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) { handleBattery(intent) }
+    }
+
+    private fun handleBattery(i: Intent) {
+        val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+        if (level < 0 || scale <= 0) return
+        val pct = level * 100 / scale
+        val st = i.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        val charging = st == BatteryManager.BATTERY_STATUS_CHARGING || st == BatteryManager.BATTERY_STATUS_FULL
+        if (pct == lastPct && charging == lastCharging) return      // ACTION_BATTERY_CHANGED còn bắn khi nhiệt độ/điện áp đổi
+        lastPct = pct; lastCharging = charging
+        runtime?.onBattery(pct, charging)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Android bắt buộc có một thông báo khi ứng dụng chạy nền liên tục. Đặt ở mức MIN: im lặng, thu gọn, không hiện biểu tượng trên thanh trạng thái.
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Mesh", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Chạy nền", NotificationManager.IMPORTANCE_MIN))
         val n = Notification.Builder(this, CHANNEL)
-            .setContentTitle("OfflineMesh đang chạy")
+            .setContentTitle("OfflineMesh")
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setOngoing(true)
             .build()
@@ -51,10 +73,8 @@ class MeshService : Service() {
         } else {
             startForeground(2, n)
         }
-        // Hai chế độ dùng chung dịch vụ GATT nên không chạy cùng lúc.
-        stopService(Intent(this, MeshForegroundService::class.java))
 
-        // Mỗi lần bấm Bắt đầu: dừng bản cũ, tạo bản mới và đọc lại Bluetooth ngay lúc đó.
+        // Mỗi lần dịch vụ được khởi động (vào app hoặc Bluetooth bật lại): dừng bản cũ, tạo bản mới và đọc lại Bluetooth ngay lúc đó.
         runtime?.stop()
         MeshController.commands = null
         val fresh = MeshRuntime(this, AppLog.log)
@@ -68,6 +88,14 @@ class MeshService : Service() {
                 )
                 receiverRegistered = true
             }
+            lastPct = -1
+            if (!batteryRegistered) {
+                ContextCompat.registerReceiver(
+                    this, batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED,
+                )
+                batteryRegistered = true
+            }
+            registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.let { handleBattery(it) }   // trạng thái hiện tại
         } else {
             stopSelf()   // start() đã hiện lỗi; không giữ dịch vụ nền vô ích
         }
@@ -83,6 +111,7 @@ class MeshService : Service() {
 
     override fun onDestroy() {
         if (receiverRegistered) { runCatching { unregisterReceiver(btReceiver) }; receiverRegistered = false }
+        if (batteryRegistered) { runCatching { unregisterReceiver(batteryReceiver) }; batteryRegistered = false }
         runtime?.stop()
         runtime = null
         MeshController.commands = null
@@ -91,6 +120,6 @@ class MeshService : Service() {
     }
 
     private companion object {
-        const val CHANNEL = "mesh"
+        const val CHANNEL = "mesh_run"
     }
 }

@@ -30,6 +30,10 @@ import android.os.SystemClock
 import com.offlinemesh.core.common.Layer
 import com.offlinemesh.core.common.Level
 import com.offlinemesh.core.common.MeshLog
+import com.offlinemesh.core.mesh.power.AdvInterval
+import com.offlinemesh.core.mesh.power.PowerLevel
+import com.offlinemesh.core.mesh.power.PowerPolicy
+import com.offlinemesh.core.mesh.power.PowerProfile
 import com.offlinemesh.core.mesh.transport.ConnectConfig
 import com.offlinemesh.core.mesh.transport.ConnectPolicy
 import com.offlinemesh.core.mesh.transport.LinkFrame
@@ -102,7 +106,32 @@ class BleTransport(
 
     private var listener: TransportListener? = null
     private var started = false
+    private val baseCfg = cfg
     private val policy = ConnectPolicy(selfId, cfg)
+
+    // Chế độ năng lượng hiện hành (đổi qua applyProfile): chu kỳ quét, kiểu quảng bá, số liên kết, thời gian rảnh.
+    private var profile: PowerProfile = PowerPolicy.profile(PowerLevel.FULL)
+    private var idleMs = IDLE_CLOSE_MS
+    private var scanOn = false
+    private val scanCycle = object : Runnable {
+        override fun run() {
+            if (!started) return
+            val d = profile.scan
+            if (d.continuous) {
+                if (!scanOn) { startScan(); scanOn = true }
+                return
+            }
+            if (scanOn) {
+                runCatching { scanner?.stopScan(scanCb) }
+                scanOn = false
+                handler.postDelayed(this, d.offMs)
+            } else {
+                startScan()
+                scanOn = true
+                handler.postDelayed(this, d.onMs)
+            }
+        }
+    }
     private val devices = HashMap<PeerId, BluetoothDevice>()
     private val lastSighting = HashMap<PeerId, Long>()
     private val links = HashMap<PeerId, Link>()
@@ -178,6 +207,8 @@ class BleTransport(
         connectTimeout?.let { handler.removeCallbacks(it) }
         connectTimeout = null
         runCatching { advertiser?.stopAdvertising(advCb) }
+        handler.removeCallbacks(scanCycle)
+        scanOn = false
         runCatching { scanner?.stopScan(scanCb) }
         for (l in links.values.toList()) {
             l.closed = true
@@ -191,6 +222,23 @@ class BleTransport(
         server = null; txChar = null; advertiser = null; scanner = null
         listener = null
         i("transport_stop")
+    }
+
+    // ================= chế độ năng lượng =================
+    /**
+     * Áp dụng một PowerProfile (gọi trên luồng handler, khi mức năng lượng đổi): chu kỳ quét, kiểu quảng bá,
+     * số liên kết chủ động tối đa và thời gian rảnh trước khi đóng liên kết.
+     * Lưu ý Android chặn quét bắt đầu quá 5 lần/30 giây nên mọi chu kỳ đều dài từ 6 giây.
+     */
+    fun applyProfile(p: PowerProfile) {
+        val advChanged = p.adv != profile.adv
+        profile = p
+        idleMs = p.idleCloseMs
+        policy.reconfigure(baseCfg.copy(maxCentralLinks = p.maxCentralLinks))
+        i("power_profile", "level=${p.level} scan=${p.scan.onMs}/${p.scan.offMs}ms adv=${p.adv} links=${p.maxCentralLinks} idle=${p.idleCloseMs}ms")
+        if (!started || server == null) return
+        if (advChanged && advertiser != null) startAdvertising()
+        if (scanner != null) { handler.removeCallbacks(scanCycle); scanCycle.run() }
     }
 
     // ================= gửi =================
@@ -275,7 +323,7 @@ class BleTransport(
         runCatching { advertiser?.stopAdvertising(advCb) }
         advertiser = adv
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+            .setAdvertiseMode(if (profile.adv == AdvInterval.LOW_POWER) AdvertiseSettings.ADVERTISE_MODE_LOW_POWER else AdvertiseSettings.ADVERTISE_MODE_BALANCED)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
             .setConnectable(true)
             .setTimeout(0)
@@ -492,7 +540,7 @@ class BleTransport(
         override fun onServiceAdded(status: Int, service: BluetoothGattService) {
             handler.post {
                 i("server_ready", "status=$status")
-                if (status == BluetoothGatt.GATT_SUCCESS && started) { startAdvertising(); startScan() }
+                if (status == BluetoothGatt.GATT_SUCCESS && started) { startAdvertising(); handler.removeCallbacks(scanCycle); scanOn = false; scanCycle.run() }
                 else if (started) fatal("Không đăng ký được dịch vụ GATT (status=$status)")
             }
         }
@@ -615,12 +663,12 @@ class BleTransport(
     private fun touch(l: Link) {
         l.lastActivity = now()
         handler.removeCallbacks(l.idle)
-        handler.postDelayed(l.idle, if (l.role == Role.CENTRAL) IDLE_CLOSE_MS else IDLE_CLOSE_MS * 3)
+        handler.postDelayed(l.idle, if (l.role == Role.CENTRAL) idleMs else idleMs * 3)
     }
 
     private fun onIdle(l: Link) {
         if (l.closed) return
-        val limit = if (l.role == Role.CENTRAL) IDLE_CLOSE_MS else IDLE_CLOSE_MS * 3
+        val limit = if (l.role == Role.CENTRAL) idleMs else idleMs * 3
         if (now() - l.lastActivity >= limit - 200) { i("idle_close", peer = l.peer); closeLink(l) }
         else handler.postDelayed(l.idle, limit)
     }

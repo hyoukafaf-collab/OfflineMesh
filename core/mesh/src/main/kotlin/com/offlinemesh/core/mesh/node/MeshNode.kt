@@ -14,7 +14,9 @@ import com.offlinemesh.core.mesh.link.LinkSession
 import com.offlinemesh.core.mesh.link.LinkState
 import com.offlinemesh.core.mesh.routing.Defaults
 import com.offlinemesh.core.mesh.routing.KindDefaults
+import com.offlinemesh.core.mesh.routing.AllowAllRelay
 import com.offlinemesh.core.mesh.routing.Limits
+import com.offlinemesh.core.mesh.routing.RelayFilter
 import com.offlinemesh.core.mesh.routing.DefaultPolicy
 import com.offlinemesh.core.mesh.routing.ForwardingPolicy
 import com.offlinemesh.core.mesh.store.BundleStore
@@ -62,6 +64,8 @@ class MeshNode(
      * mô phỏng mặc định tắt để mỗi cuộc gặp chỉ có một vòng.
      */
     private val autoResync: Boolean = false,
+    /** Có nhận/chuyển tiếp tin của người khác không (đổi theo chế độ năng lượng). Không áp dụng cho tin gửi cho mình, SOS và ACK. */
+    relayFilter: RelayFilter = AllowAllRelay,
     /** Gọi khi có tin gửi cho mình hoặc tin broadcast (SOS...). Mỗi tin chỉ một lần. */
     var onReceived: (StoredBundle) -> Unit = {},
     /** Móc đo đạc: gọi sau mỗi lần gửi thành công một tin cho một peer (dùng cho mô phỏng/thống kê). */
@@ -74,6 +78,13 @@ class MeshNode(
     }
 
     val stats = NodeStats()
+
+    @Volatile
+    var relayFilter: RelayFilter = relayFilter
+
+    /** Gọi khi một tin do CHÍNH MÌNH gửi đã được người nhận xác nhận (ACK hợp lệ). */
+    @Volatile
+    var onAcked: (BundleId) -> Unit = {}
     private val cache = RelayCache(store, cacheConfig, log)
     private val encounters = HashMap<PeerId, Encounter>()
     private val lastDone = HashMap<PeerId, Pair<Long, Int>>()   // thời điểm, version lúc đã trao đổi
@@ -209,7 +220,7 @@ class MeshNode(
         val items = store.all()
             .filter {
                 it.core.id !in e.peerSeen && !it.isExpired(now) &&
-                    policy.decide(it, e.peer, now) != null && ackUseful(it, e.peerSeen)
+                    policy.decide(it, e.peer, now) != null && ackUseful(it, e.peerSeen) && mayOffer(it, e.peer)
             }
             .sortedWith(compareBy<StoredBundle>({ if (it.core.dst == e.peer) 0 else 1 }, { it.core.kind.rank }, { it.core.size }))
             .map { OfferItem(it.core.id, it.core.kind, it.core.dst, it.core.size, it.remainingMs(now)) }
@@ -222,12 +233,21 @@ class MeshNode(
         send(e, LinkMsg.Request(offer.items.filter { wants(it, now) }.map { it.id }))
     }
 
-    /** Tin broadcast hoặc gửi cho mình luôn nhận; tin relay phải qua kiểm tra hạn mức cache. */
+    /** Tin gửi cho mình, SOS và ACK luôn được nhận; các tin còn lại (chuyển tiếp hộ người khác) phụ thuộc bộ lọc năng lượng và hạn mức cache. */
     private fun wants(o: OfferItem, now: Long): Boolean {
         if (store.isSeen(o.id) || store.isAcked(o.id) || o.remainingMs <= 0) return false
-        if (o.dst == null || o.dst == selfId) return true
+        if (o.dst == selfId || isAlwaysRelayed(o.dst, o.kind)) return true
+        if (!relayFilter.allow(o.kind, o.size)) return false
+        if (o.dst == null) return true
         return cache.admit(o.kind, o.size, o.remainingMs, now, commit = false)
     }
+
+    private fun isAlwaysRelayed(dst: PeerId?, kind: Kind) = dst == null && (kind == Kind.SOS || kind == Kind.ACK)
+
+    /** Máy đang tiết kiệm pin không chào bản chuyển tiếp bị cấm; tin do mình tạo, tin cho đúng peer, SOS và ACK luôn được chào. */
+    private fun mayOffer(b: StoredBundle, peer: PeerId): Boolean =
+        b.originated || b.core.dst == peer || isAlwaysRelayed(b.core.dst, b.core.kind) ||
+            relayFilter.allow(b.core.kind, b.core.size)
 
     private fun sendBundles(e: Encounter, req: LinkMsg.Request) {
         advance(e, LinkState.TRANSFER, "gửi tin")
@@ -257,6 +277,9 @@ class MeshNode(
         if (!verifier.verify(c)) { reject(c, e, ErrorCode.BAD_SIGNATURE); return }
         if (w.ageMs >= c.lifetimeMs) { reject(c, e, ErrorCode.EXPIRED); return }
         if (w.hops + 1 > c.maxHops) { reject(c, e, ErrorCode.HOP_LIMIT); return }
+        if (c.dst != selfId && !isAlwaysRelayed(c.dst, c.kind) && !relayFilter.allow(c.kind, c.size)) {
+            reject(c, e, ErrorCode.RELAY_REFUSED); return
+        }
         val remaining = c.lifetimeMs - w.ageMs
         val until = now + remaining + SEEN_MARGIN_MS
         stats.bundlesReceived++
@@ -323,6 +346,7 @@ class MeshNode(
         if (copy != null && copy.core.dst == ack.src) {
             store.remove(target)
             ev(Level.INFO, "ack_applied", target, detail = "by=${ack.src.short()}")
+            if (copy.originated) onAcked(target)
         }
         return true
     }

@@ -19,7 +19,7 @@ data class ConnectConfig(
  * - Nối hỏng thì lùi dần; nối xong thì nghỉ một lúc (tránh nối lại liên tục).
  * - Chọn máy có tín hiệu mạnh nhất (gần nhất) trước.
  */
-class ConnectPolicy(private val self: PeerId, private val cfg: ConnectConfig = ConnectConfig()) {
+class ConnectPolicy(private val self: PeerId, private var cfg: ConnectConfig = ConnectConfig()) {
     private class Seen(var first: Long, var last: Long, var rssi: Int)
     private class History { var failures = 0; var notBefore = 0L }
 
@@ -27,6 +27,9 @@ class ConnectPolicy(private val self: PeerId, private val cfg: ConnectConfig = C
     private val history = HashMap<PeerId, History>()
     private val connecting = HashSet<PeerId>()
     private val central = HashSet<PeerId>()
+
+    /** Đổi cấu hình khi chế độ năng lượng thay đổi (ví dụ giảm số liên kết đồng thời). */
+    fun reconfigure(c: ConnectConfig) { cfg = c }
 
     fun onSighting(peer: PeerId, rssi: Int, now: Long) {
         if (peer == self) return

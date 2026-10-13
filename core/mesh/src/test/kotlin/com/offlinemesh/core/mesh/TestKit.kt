@@ -11,7 +11,9 @@ import com.offlinemesh.core.mesh.node.PayloadCipher
 import com.offlinemesh.core.mesh.node.Signer
 import com.offlinemesh.core.mesh.node.Verifier
 import com.offlinemesh.core.mesh.routing.DefaultPolicy
+import com.offlinemesh.core.mesh.routing.AllowAllRelay
 import com.offlinemesh.core.mesh.routing.Defaults
+import com.offlinemesh.core.mesh.routing.RelayFilter
 import com.offlinemesh.core.mesh.routing.ForwardingPolicy
 import com.offlinemesh.core.mesh.routing.KindDefaults
 import com.offlinemesh.core.mesh.sim.OffsetClock
@@ -61,6 +63,7 @@ class Lab(
     autoResync: Boolean = false,
     cipher: (Int) -> PayloadCipher = { NoCipher },
     idsOverride: List<PeerId>? = null,
+    relayFilter: (Int) -> RelayFilter = { AllowAllRelay },
 ) {
     val clock = FakeClock(0)
     val net = FakeNetwork(seed)
@@ -70,7 +73,7 @@ class Lab(
     val nodes: List<MeshNode> = List(n) { i ->
         MeshNode(
             ids[i], net.add(ids[i], frame), OffsetClock(clock, skews[i]), MeshLog(clock, listOf(ring)),
-            Random(100 + i), policy = policy(), signer = signer(i), verifier = verifier(i), defaultsFor = defaults, autoResync = autoResync, cipher = cipher(i),
+            Random(100 + i), policy = policy(), signer = signer(i), verifier = verifier(i), defaultsFor = defaults, autoResync = autoResync, cipher = cipher(i), relayFilter = relayFilter(i),
             onReceived = { received[i] += it },
         ).also { it.start() }
     }

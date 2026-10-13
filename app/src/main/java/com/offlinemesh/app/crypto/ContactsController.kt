@@ -1,6 +1,9 @@
 package com.offlinemesh.app.crypto
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import android.content.SharedPreferences
 import android.os.Build
 import com.offlinemesh.core.mesh.crypto.AddResult
@@ -65,6 +68,22 @@ object IdentityStore {
         f.writeBytes(AndroidSecretStore.wrap(fresh.serialize()))
         return fresh
     }
+
+    /** Khôi phục từ bản sao lưu: ghi danh tính đã giải mã (bọc lại bằng Keystore của máy này), ghi tệp tạm rồi đổi tên để không bao giờ để lại tệp dở. */
+    @Synchronized
+    fun replace(ctx: Context, id: Identity) {
+        val f = File(ctx.filesDir, "identity.bin")
+        val tmp = File(ctx.filesDir, "identity.bin.tmp")
+        tmp.writeBytes(AndroidSecretStore.wrap(id.serialize()))
+        if (!tmp.renameTo(f)) { f.writeBytes(tmp.readBytes()); tmp.delete() }
+    }
+
+    /** Xóa tài khoản: bỏ tệp danh tính; lần `get` kế tiếp sẽ tạo danh tính mới. */
+    @Synchronized
+    fun delete(ctx: Context) {
+        File(ctx.filesDir, "identity.bin").delete()
+        File(ctx.filesDir, "identity.bin.tmp").delete()
+    }
 }
 
 data class ContactUi(val peer: String, val name: String, val fingerprint: String)
@@ -89,8 +108,7 @@ object ContactsController {
         private set
     private lateinit var prefs: SharedPreferences
 
-    @Volatile
-    var state = ContactsUiState()
+    var state by mutableStateOf(ContactsUiState())
         private set
 
     @Volatile

@@ -1,71 +1,49 @@
 package com.offlinemesh.app
 
-import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
-import android.os.Build
+import android.content.IntentFilter
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.MaterialTheme
 import androidx.core.content.ContextCompat
-import com.offlinemesh.app.echo.EchoController
+import com.offlinemesh.app.data.AppGate
 import com.offlinemesh.app.mesh.MeshController
-import com.offlinemesh.app.service.MeshForegroundService
-import com.offlinemesh.app.service.MeshService
 import com.offlinemesh.app.ui.AppRoot
 
+/** Chỉ chế độ dọc (khai báo trong manifest). Mesh tự bật khi đủ điều kiện, không có nút Bắt đầu. */
 class MainActivity : ComponentActivity() {
-    private var afterPermission: (() -> Unit)? = null
-
-    private val askPerms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
-        val required = requiredPermissions()
-        if (required.all { r[it] == true }) {
-            afterPermission?.invoke()
-        } else {
-            val msg = "Chưa cấp đủ quyền: ${required.filter { p -> r[p] != true }.joinToString { p -> p.substringAfterLast('.') }}"
-            EchoController.update { it.copy(error = msg) }
-            MeshController.update { it.copy(error = msg) }
+    // Bluetooth bật/tắt: sự kiện hệ thống, không quét định kỳ
+    private val btReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            AppGate.refresh(this@MainActivity)
+            if (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1) == BluetoothAdapter.STATE_ON) AppGate.ensureMesh(this@MainActivity)
         }
-        afterPermission = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                AppRoot(
-                    onStartEcho = { requestThen { start(MeshForegroundService::class.java) } },
-                    onStopEcho = { stopService(Intent(this, MeshForegroundService::class.java)) },
-                    onStartMesh = { requestThen { start(MeshService::class.java) } },
-                    onStopMesh = { stopService(Intent(this, MeshService::class.java)) },
-                )
-            }
-        }
+        setContent { AppRoot() }
     }
 
     override fun onStart() {
         super.onStart()
-        EchoController.clearStaleMessages()
+        AppGate.foreground = true
+        ContextCompat.registerReceiver(this, btReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppGate.refresh(this)               // kiểm tra lại Bluetooth và quyền chạy nền mỗi lần vào app
         MeshController.clearStaleMessages()
+        AppGate.ensureMesh(this)
     }
 
-    /** Quyền bắt buộc theo phiên bản Android. */
-    private fun requiredPermissions(): List<String> =
-        if (Build.VERSION.SDK_INT >= 31) {
-            listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-
-    private fun requestThen(action: () -> Unit) {
-        afterPermission = action
-        val all = requiredPermissions() +
-            if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
-        askPerms.launch(all.toTypedArray())
-    }
-
-    private fun start(service: Class<*>) {
-        ContextCompat.startForegroundService(this, Intent(this, service))
+    override fun onStop() {
+        AppGate.foreground = false
+        runCatching { unregisterReceiver(btReceiver) }
+        super.onStop()
     }
 }

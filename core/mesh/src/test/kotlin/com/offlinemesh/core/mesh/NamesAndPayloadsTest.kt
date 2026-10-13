@@ -108,7 +108,7 @@ class NamesAndPayloadsTest {
         assertEquals("Mắc kẹt tầng 2, có 3 người", back.text)
         val noPos = assertNotNull(SosPayload.decode(SosPayload(SosType.SAFE, null, 0, "Tôi an toàn").encode()))
         assertNull(noPos.position)
-        assertEquals(16 + "Tôi an toàn".toByteArray().size, SosPayload(SosType.SAFE, null, 0, "Tôi an toàn").encode().size)
+        assertEquals(19 + "Tôi an toàn".toByteArray().size, SosPayload(SosType.SAFE, null, 0, "Tôi an toàn").encode().size)
         assertNull(SosPayload.decode(SosPayload(SosType.SAFE, GeoPoint(0, 0, null), 0, "").encode())!!.position?.accuracyM)
     }
 
@@ -119,7 +119,7 @@ class NamesAndPayloadsTest {
         assertEquals(140, back.text.length)
         assertNull(back.position!!.accuracyM)                                        // 65535 trở lên được coi là không rõ
         assertEquals(65535, back.fixAgeSec)
-        assertTrue(big.size <= 16 + 140)
+        assertTrue(big.size <= 19 + 140)
         val ok = SosPayload(SosType.INJURED, GeoPoint(5, 5), 1, "ok").encode()
         for (len in 0 until ok.size) assertNull(SosPayload.decode(ok.copyOf(len)), "len=$len")
         assertNull(SosPayload.decode(ok + byteArrayOf(0)))
