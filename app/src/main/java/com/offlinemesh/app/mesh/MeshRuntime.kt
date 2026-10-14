@@ -23,6 +23,7 @@ import com.offlinemesh.core.common.Level
 import com.offlinemesh.core.common.MeshLog
 import com.offlinemesh.core.common.WallClock
 import com.offlinemesh.core.mesh.crypto.MeshCrypto
+import com.offlinemesh.core.mesh.history.InboundPolicy
 import com.offlinemesh.core.mesh.history.StoredMessage
 import com.offlinemesh.core.mesh.node.MeshNode
 import com.offlinemesh.core.mesh.payload.GeoMath
@@ -171,8 +172,12 @@ class MeshRuntime(private val ctx: Context, private val log: MeshLog) : MeshCont
     // ---------- tin nhận được ----------
     private fun nameOf(src: PeerId): String {
         val c = ContactsController.book.byPeer(src)
-        return if (c != null) c.name else "ID ${src.short()}"
+        return if (c != null) c.name else "ID ${src.short()} (chưa xác minh)"
     }
+
+    /** Tiêu đề thông báo cho tin riêng: tên liên hệ, hoặc "Người lạ …" (tin riêng gửi tới mình nhưng chưa biết khóa người gửi). */
+    private fun privateTitle(src: PeerId, stranger: Boolean): String =
+        if (stranger) "Người lạ ${src.short()} nhắn riêng" else nameOf(src)
 
     private fun verified(sb: StoredBundle): Boolean = ContactsController.book.isPinned(sb.core.src, sb.core.pubKey)
 
@@ -182,6 +187,19 @@ class MeshRuntime(private val ctx: Context, private val log: MeshLog) : MeshCont
         val id = c.id.hex
         val src = c.src.hex
         val isPublic = c.dst == null
+        // Một nơi duy nhất quyết định tin xếp vào đâu hay bị bỏ (InboundPolicy, có test trên JVM):
+        //  - công khai (gửi cho mọi người) ≠ người lạ nhắn riêng (tin mã hóa gửi đúng cho mình, chỉ chưa biết khóa người gửi) ≠ liên hệ;
+        //  - bị chặn, hoặc bật "chỉ nhận tin riêng từ danh bạ" mà người gửi là người lạ, hoặc mạo PeerId của liên hệ: bỏ qua, không lưu, không thông báo;
+        //  - SOS luôn được nhận. Bỏ qua ở đây không ảnh hưởng việc chuyển tiếp cho người khác, và máy vẫn gửi ACK ("máy đã nhận", không phải "đã đọc").
+        val decision = InboundPolicy.decide(
+            isSos = c.kind == Kind.SOS, isPublic = isPublic, srcHex = src,
+            inContacts = ContactsController.book.byPeer(c.src) != null, keyPinned = verified(sb),
+            blocked = ContactsController.isBlocked(src), contactsOnly = AppSettings.contactsOnly,
+        )
+        val place = when (decision) {
+            is InboundPolicy.Decision.Skip -> return
+            is InboundPolicy.Decision.Store -> decision
+        }
         when (c.kind) {
             Kind.SOS -> {
                 val p = SosPayload.decode(c.payload)
@@ -201,16 +219,16 @@ class MeshRuntime(private val ctx: Context, private val log: MeshLog) : MeshCont
                 val img = ImagePayload.decode(c.payload) ?: return
                 val name = MessageStore.saveImage(id, img.jpeg)
                 val sosImage = img.sos && isPublic                      // ảnh SOS chỉ hợp lệ khi phát cho mọi người; cờ trên tin riêng bị bỏ qua
-                val conv = if (sosImage) "SOS" else if (isPublic) "PUBLIC" else src
+                val conv = if (sosImage) "SOS" else place.conv
                 MessageStore.add(StoredMessage(id, conv, false, "IMAGE", "", name, now, src = src, pinned = verified(sb), hops = sb.hops, ageSec = (sb.ageAtReceiveMs / 1000).toInt()))
                 if (sosImage) Notifier.notify(true, "SOS: ảnh", "${nameOf(c.src)} đã gửi một ảnh", "SOS", ChatState.viewing())
-                else Notifier.notify(false, nameOf(c.src), "đã gửi một ảnh", conv, ChatState.viewing())
+                else Notifier.notify(false, if (isPublic) "Công khai · ${nameOf(c.src)}" else privateTitle(c.src, place.stranger), "đã gửi một ảnh", conv, ChatState.viewing())
             }
             else -> {
                 val text = String(c.payload, Charsets.UTF_8)
-                val conv = if (isPublic) "PUBLIC" else src
+                val conv = place.conv
                 MessageStore.add(StoredMessage(id, conv, false, "TEXT", text, null, now, src = src, pinned = verified(sb), hops = sb.hops, ageSec = (sb.ageAtReceiveMs / 1000).toInt()))
-                Notifier.notify(false, nameOf(c.src), text, conv, ChatState.viewing())
+                Notifier.notify(false, if (isPublic) "Công khai · ${nameOf(c.src)}" else privateTitle(c.src, place.stranger), text, conv, ChatState.viewing())
             }
         }
         updateStats()
@@ -278,12 +296,12 @@ class MeshRuntime(private val ctx: Context, private val log: MeshLog) : MeshCont
                 return@Thread
             }
             val payload = ImagePayload(c.image.width, c.image.height, c.image.bytes, sos).encode()
-            ui.update { it.copy(notice = "Ảnh đã nén còn ${c.image.bytes.size / 1024} KB, đang gửi") }
             handler?.post {
                 guard {
                     val id = node?.send(if (sos) null else peer?.let { PeerId(it) }, Kind.IMAGE, payload)
                     if (id != null) record(id, if (sos) "SOS" else peer ?: "PUBLIC", "IMAGE", "", MessageStore.saveImage(id.hex, c.image.bytes))
                 }
+                ui.update { it.copy(notice = null) }          // ảnh đã hiện trong danh sách; không để lại dòng báo "đang nén/đang gửi"
             }
         }.start()
     }

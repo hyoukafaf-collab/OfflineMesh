@@ -25,6 +25,7 @@ object AppSettings {
     private val warnPublicHiddenS = mutableStateOf(false)
     private val restoreAskedS = mutableStateOf(false)         // đã hỏi "khôi phục bản sao lưu cũ?" ở lần mở đầu tiên
     private val lastBackupS = mutableStateOf(0L)               // giờ (ms) của lần sao lưu gần nhất, 0 = chưa từng
+    private val contactsOnlyS = mutableStateOf(false)          // true: chỉ nhận TIN RIÊNG từ người trong danh bạ (công khai và SOS không bị ảnh hưởng)
 
     val theme: Int get() = themeS.value
     val notifMsg: Boolean get() = notifMsgS.value
@@ -38,6 +39,7 @@ object AppSettings {
     val warnPublicHidden: Boolean get() = warnPublicHiddenS.value
     val restoreAsked: Boolean get() = restoreAskedS.value
     val lastBackupMs: Long get() = lastBackupS.value
+    val contactsOnly: Boolean get() = contactsOnlyS.value
 
     fun init(ctx: Context) {
         prefs = ctx.applicationContext.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
@@ -53,6 +55,7 @@ object AppSettings {
         warnPublicHiddenS.value = prefs.getBoolean("warn_public_hidden", false)
         restoreAskedS.value = prefs.getBoolean("restore_asked", false)
         lastBackupS.value = prefs.getLong("last_backup", 0L)
+        contactsOnlyS.value = prefs.getBoolean("contacts_only", false)
     }
 
     fun replayDurationMs(): Long = ReplayConfig.clampDuration(replayMin * 60_000L)
@@ -68,5 +71,6 @@ object AppSettings {
     fun hideSosWarning() { warnSosHiddenS.value = true; prefs.edit().putBoolean("warn_sos_hidden", true).apply() }
     fun markRestoreAsked() { restoreAskedS.value = true; prefs.edit().putBoolean("restore_asked", true).apply() }
     fun setLastBackup(ms: Long) { lastBackupS.value = ms; prefs.edit().putLong("last_backup", ms).apply() }
+    fun setContactsOnly(v: Boolean) { contactsOnlyS.value = v; prefs.edit().putBoolean("contacts_only", v).apply() }
     fun hidePublicWarning() { warnPublicHiddenS.value = true; prefs.edit().putBoolean("warn_public_hidden", true).apply() }
 }

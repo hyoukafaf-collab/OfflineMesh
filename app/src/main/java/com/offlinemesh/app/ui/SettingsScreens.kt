@@ -62,6 +62,7 @@ fun SettingsHome(onBack: () -> Unit, go: (String) -> Unit) {
         SectionHeader("TÀI KHOẢN")
         SettingRow("Cá nhân", "Tên, mã QR, thẻ liên hệ", { go("profile") })
         SettingRow("Danh bạ ghim khóa", "${ContactsController.state.contacts.size} người", { go("contacts") })
+        SwitchRow("Chỉ nhận tin riêng từ danh bạ", contactsOnlySubtitle(), AppSettings.contactsOnly) { AppSettings.setContactsOnly(it) }
         SettingRow("Sao lưu và tài khoản", backupSubtitle(), { go("backup") })
         SectionHeader("THIẾT BỊ")
         SettingRow("Pin và chế độ", "${power.levelText}${if (power.battery >= 0) " · ${power.battery}%" else ""}${if (power.emergency) " · khẩn cấp" else ""}", { go("battery") })
@@ -85,6 +86,10 @@ fun SettingsHome(onBack: () -> Unit, go: (String) -> Unit) {
         SettingRow("Chia sẻ ứng dụng", "Gửi bản cài đặt qua Bluetooth", { go("share") })
     }
 }
+
+private fun contactsOnlySubtitle(): String =
+    if (AppSettings.contactsOnly) "Bật: tin riêng từ người chưa có trong danh bạ bị bỏ qua. Tin công khai và SOS vẫn nhận"
+    else "Tắt: người lạ nhắn riêng sẽ hiện ở mục \"Người lạ\" (chỉ đọc). Tin công khai và SOS luôn nhận"
 
 private fun backupSubtitle(): String {
     val t = AppSettings.lastBackupMs
@@ -143,15 +148,23 @@ fun ContactsManageScreen(onBack: () -> Unit) {
     val s = ContactsController.state
     var confirm by remember { mutableStateOf<String?>(null) }
     ScreenColumn("Danh bạ ghim khóa", onBack) {
+        SwitchRow("Chỉ nhận tin riêng từ danh bạ", contactsOnlySubtitle(), AppSettings.contactsOnly) { AppSettings.setContactsOnly(it) }
         if (s.contacts.isEmpty()) Text("Chưa có liên hệ. Thêm ở mục Cá nhân bằng cách quét QR hoặc dán thẻ.", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         s.contacts.forEach { c ->
             SettingRow(c.name, "ID ${c.peer} · ${c.fingerprint}", trailing = { OutlinedButton(onClick = { confirm = c.peer }) { Text("Xóa") } })
         }
+        if (s.blocked.isNotEmpty()) {
+            SectionHeader("ĐÃ CHẶN")
+            s.blocked.forEach { id ->
+                SettingRow("⚠ ${id.take(8)}", "ID $id · tin riêng và tin công khai của họ bị bỏ qua (SOS vẫn nhận)", trailing = { OutlinedButton(onClick = { ContactsController.unblock(id) }) { Text("Bỏ chặn") } })
+            }
+        }
+        Text("Người lạ = người chưa có trong danh bạ mà nhắn RIÊNG cho bạn (tin mã hóa gửi đúng cho bạn, chỉ là bạn chưa biết khóa của họ). Họ hiện ở mục \"Người lạ nhắn riêng\" (chỉ đọc, xóa hoặc chặn được), bạn chưa trả lời được cho tới khi thêm thẻ của họ. Người đăng công khai thì khác: tin của họ chỉ nằm trong mục \"Công khai\", không thành \"người lạ\".", modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Khóa của mỗi liên hệ được ghim: tin chỉ hiện ✔ khi đúng khóa đã ghim. Xóa liên hệ thì không gửi tin riêng cho họ được nữa cho tới khi thêm lại.", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     confirm?.let { peer ->
         WarningDialog(
-            title = "Xóa liên hệ?", text = "Bạn sẽ không gửi được tin riêng cho người này cho tới khi thêm lại thẻ của họ.",
+            title = "Xóa liên hệ?", text = "Bạn sẽ không gửi được tin riêng cho người này cho tới khi thêm lại thẻ của họ. Cuộc trò chuyện cũ vẫn còn ở mục \"Người lạ nhắn riêng\", chỉ đọc.",
             confirmText = "Xóa", danger = true, onConfirm = { ContactsController.remove(peer); confirm = null }, onDismiss = { confirm = null },
         )
     }

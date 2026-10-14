@@ -89,8 +89,9 @@ object BackupContent {
     val SETTINGS_KEYS: Map<String, Char> = mapOf(
         "theme" to 'i', "notif_msg" to 'b', "sound_msg" to 'b', "notif_sos" to 'b', "sound_sos" to 'b',
         "replay_min" to 'i', "retention_days" to 'i', "warn_sos_hidden" to 'b', "warn_public_hidden" to 'b',
+        "contacts_only" to 'b',
     )
-    val CONTACTS_KEYS: Map<String, Char> = mapOf("my_name" to 's', "cards" to 'S')
+    val CONTACTS_KEYS: Map<String, Char> = mapOf("my_name" to 's', "cards" to 'S', "blocked" to 'S')
 
     fun sanitize(items: List<PrefItem>, allowed: Map<String, Char>): List<PrefItem> =
         items.filter { allowed[it.key] == it.tag }

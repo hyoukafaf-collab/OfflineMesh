@@ -134,6 +134,23 @@ class MessageLog {
         return gone
     }
 
+    /** Các cuộc trò chuyện riêng (không phải SOS / Công khai) đang có tin, cuộc có tin mới nhất xếp trước. */
+    fun privateConvs(): List<String> =
+        items.filter { it.conv != "SOS" && it.conv != "PUBLIC" }
+            .groupBy { it.conv }.entries
+            .sortedByDescending { e -> e.value.maxOf { it.tMs } }
+            .map { it.key }
+
+    /**
+     * Xóa mọi tin của một người (dùng khi chặn): cuộc trò chuyện riêng với họ và các tin công khai họ gửi.
+     * KHÔNG đụng tới mục SOS: tin cầu cứu luôn được giữ. Trả các tin đã xóa (để xóa tệp ảnh).
+     */
+    fun removePerson(peerHex: String): List<StoredMessage> {
+        val gone = items.filter { it.conv == peerHex || (it.conv == "PUBLIC" && it.src == peerHex) }
+        items.removeAll(gone.toSet())
+        return gone
+    }
+
     fun deleteConversation(conv: String): List<StoredMessage> {
         val gone = items.filter { it.conv == conv }
         items.removeAll(gone.toSet())

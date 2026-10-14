@@ -51,6 +51,29 @@ object MessageStore {
     @Synchronized fun sosEntries(): List<SosEntry> = log.sosEntries()
     @Synchronized fun all(): List<StoredMessage> = log.all()
 
+    /** Các cuộc trò chuyện riêng đang có tin (mới nhất trước), kể cả với người chưa có trong danh bạ. */
+    @Synchronized fun privateConvs(): List<String> = log.privateConvs()
+
+    private fun dropFiles(gone: List<StoredMessage>) { gone.forEach { m -> m.image?.let { File(imgDir, it).delete() } } }
+
+    /** Xóa cả cuộc trò chuyện (và ảnh của nó) khỏi máy này. */
+    @Synchronized
+    fun deleteConversation(conv: String): Int {
+        val gone = log.deleteConversation(conv)
+        dropFiles(gone)
+        if (gone.isNotEmpty()) { rewrite(); version++ }
+        return gone.size
+    }
+
+    /** Chặn một người: xóa cuộc trò chuyện riêng với họ và các tin công khai họ gửi. Mục SOS được giữ nguyên. */
+    @Synchronized
+    fun removePerson(peerHex: String): Int {
+        val gone = log.removePerson(peerHex)
+        dropFiles(gone)
+        if (gone.isNotEmpty()) { rewrite(); version++ }
+        return gone.size
+    }
+
     @Synchronized
     fun purgeOlderThan(cutoffMs: Long, conv: String? = null): Int {
         val gone = log.purgeOlderThan(cutoffMs, conv)

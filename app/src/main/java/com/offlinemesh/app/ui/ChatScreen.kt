@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -69,11 +70,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.offlinemesh.app.crypto.ContactsController
 import com.offlinemesh.app.data.AppGate
 import com.offlinemesh.app.data.AppSettings
 import com.offlinemesh.app.data.MessageStore
 import com.offlinemesh.app.location.LocationProvider
+import com.offlinemesh.app.media.ImageSaver
 import com.offlinemesh.app.mesh.MeshController
 import com.offlinemesh.app.mesh.SosStatus
 import com.offlinemesh.app.power.PowerController
@@ -121,15 +125,26 @@ fun ChatScreen(openSettings: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     var drawer by remember { mutableStateOf(false) }
     var deleteDialog by remember { mutableStateOf(false) }
+    var personDialog by remember { mutableStateOf<String?>(null) }          // "delete" | "block" cho người lạ
     val enableBt = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { AppGate.refresh(ctx); AppGate.ensureMesh(ctx) }
 
     LaunchedEffect(sel, ver) { MessageStore.markRead(sel) }          // đang xem cuộc trò chuyện này thì coi như đã đọc
     LaunchedEffect(wide) { if (wide) drawer = false }
     BackHandler(enabled = drawer && !wide) { drawer = false }          // Quay lại khi đang mở thanh danh sách thì chỉ đóng thanh
 
-    val title = when (sel) { "SOS" -> "SOS"; "PUBLIC" -> "Công khai"; else -> contacts.firstOrNull { it.peer == sel }?.name ?: "Tin nhắn" }
+    // Người lạ = chưa có trong danh bạ ghim khóa nhưng đã nhắn RIÊNG cho mình (tin mã hóa gửi đúng cho mình, chỉ là mình chưa biết khóa của họ): hiện ở mục "người lạ", chỉ đọc.
+    // Khác với người đăng công khai: họ chỉ nằm trong mục "Công khai", không bao giờ xuất hiện ở danh sách này.
+    val contactPeers = contacts.map { it.peer }
+    val strangers = remember(ver, contactPeers) { MessageStore.privateConvs().filter { it !in contactPeers } }
+    val isStranger = sel != "SOS" && sel != "PUBLIC" && sel !in contactPeers
+    val title = when {
+        sel == "SOS" -> "SOS"
+        sel == "PUBLIC" -> "Công khai"
+        isStranger -> "⚠ ${sel.take(8)} · người lạ"
+        else -> contacts.firstOrNull { it.peer == sel }?.name ?: "Tin nhắn"
+    }
     // Chấm đỏ trên nút ba gạch: có tin chưa đọc ở một mục khác với mục đang xem
-    val otherUnread = (ver >= 0) && (listOf("SOS", "PUBLIC") + contacts.map { it.peer }).any { it != sel && MessageStore.unread(it) > 0 }
+    val otherUnread = (ver >= 0) && (listOf("SOS", "PUBLIC") + contactPeers + strangers).any { it != sel && MessageStore.unread(it) > 0 }
     // Chạm ra ngoài ô nhập thì tắt bàn phím (các nút/ô nhập tự nhận chạm của chúng trước)
     Column(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { focus.clearFocus() } }) {
         TopBar(title, onMenu = if (wide) null else ({ drawer = true }), menuBadge = otherUnread, actions = {
@@ -138,7 +153,13 @@ fun ChatScreen(openSettings: () -> Unit) {
             Box {
                 TextButton(onClick = { menu = true }) { Text("⋮", fontSize = 22.sp) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("Xóa tin cũ…") }, onClick = { menu = false; deleteDialog = true })
+                    if (isStranger) {
+                        // Người tạm: không có "xóa tin theo thời gian" mà xóa hẳn người này hoặc chặn
+                        DropdownMenuItem(text = { Text("Xóa người này…") }, onClick = { menu = false; personDialog = "delete" })
+                        DropdownMenuItem(text = { Text("Chặn người này…") }, onClick = { menu = false; personDialog = "block" })
+                    } else {
+                        DropdownMenuItem(text = { Text("Xóa tin cũ…") }, onClick = { menu = false; deleteDialog = true })
+                    }
                 }
             }
             TextButton(onClick = openSettings) { Text("⚙", fontSize = 22.sp) }
@@ -154,15 +175,21 @@ fun ChatScreen(openSettings: () -> Unit) {
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             Row(Modifier.fillMaxSize()) {
-                if (wide) Rail(sel, contacts.map { it.peer to it.name })
+                if (wide) Rail(sel, contacts.map { it.peer to it.name }, strangers)
                 Box(Modifier.weight(1f).fillMaxHeight()) {
-                    when (sel) { "SOS" -> SosPane(); "PUBLIC" -> PublicPane(); else -> PrivatePane(sel) }
+                    when {
+                        sel == "SOS" -> SosPane()
+                        sel == "PUBLIC" -> PublicPane()
+                        isStranger -> StrangerPane(sel, onDelete = { personDialog = "delete" }, onBlock = { personDialog = "block" })
+                        else -> PrivatePane(sel)
+                    }
                 }
             }
-            if (!wide) DrawerOverlay(drawer, sel, contacts.map { it.peer to it.name }, onPick = { ChatState.selected = it; drawer = false }, onClose = { drawer = false })
+            if (!wide) DrawerOverlay(drawer, sel, contacts.map { it.peer to it.name }, strangers, onPick = { ChatState.selected = it; drawer = false }, onClose = { drawer = false })
         }
     }
     if (deleteDialog) DeleteOldDialog(sel) { deleteDialog = false }
+    if (personDialog != null && isStranger) StrangerActionDialog(sel, block = personDialog == "block") { personDialog = null }
 }
 
 @Composable
@@ -193,13 +220,14 @@ private fun DeleteOldDialog(conv: String, onDone: () -> Unit) {
 
 // ---------------------------------------------------------------- danh sách mục: thanh dọc (màn rộng) và ngăn kéo (điện thoại)
 @Composable
-private fun Rail(sel: String, contacts: List<Pair<String, String>>) {
+private fun Rail(sel: String, contacts: List<Pair<String, String>>, strangers: List<String>) {
     val collapsed = ChatState.collapsed
     Column(Modifier.width(if (collapsed) 48.dp else 88.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface)) {
         RailItem("SOS", "SOS", sel == "SOS", MessageStore.unread("SOS"), danger = true, collapsed = collapsed)
         RailItem("PUBLIC", "Công khai", sel == "PUBLIC", MessageStore.unread("PUBLIC"), danger = false, collapsed = collapsed)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             contacts.forEach { (peer, name) -> RailItem(peer, name, sel == peer, MessageStore.unread(peer), danger = false, collapsed = collapsed) }
+            strangers.forEach { peer -> RailItem(peer, "⚠ ${peer.take(6)}", sel == peer, MessageStore.unread(peer), danger = false, collapsed = collapsed) }      // người lạ nhắn riêng
         }
         TextButton(onClick = { ChatState.collapsed = !collapsed }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text(if (collapsed) "›" else "‹", fontSize = 22.sp) }
     }
@@ -230,18 +258,18 @@ private fun RailItem(key: String, label: String, selected: Boolean, unread: Int,
  * Viết thành hàm riêng (không nằm trong lambda của Column/Row) để `AnimatedVisibility` không bị nhầm sang bản mở rộng của ColumnScope.
  */
 @Composable
-private fun DrawerOverlay(visible: Boolean, sel: String, contacts: List<Pair<String, String>>, onPick: (String) -> Unit, onClose: () -> Unit) {
+private fun DrawerOverlay(visible: Boolean, sel: String, contacts: List<Pair<String, String>>, strangers: List<String>, onPick: (String) -> Unit, onClose: () -> Unit) {
     AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).pointerInput(Unit) { detectTapGestures { onClose() } })
     }
     AnimatedVisibility(visible = visible, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
-        ChatDrawer(sel, contacts, onPick)
+        ChatDrawer(sel, contacts, strangers, onPick)
     }
 }
 
 /** Ngăn kéo cho điện thoại: tên đầy đủ (không cắt còn 1 chữ như thanh thu gọn), có số tin chưa đọc. */
 @Composable
-private fun ChatDrawer(sel: String, contacts: List<Pair<String, String>>, onPick: (String) -> Unit) {
+private fun ChatDrawer(sel: String, contacts: List<Pair<String, String>>, strangers: List<String>, onPick: (String) -> Unit) {
     val c = MaterialTheme.colorScheme
     Surface(color = c.surface, shadowElevation = 8.dp, modifier = Modifier.width(280.dp).fillMaxHeight().pointerInput(Unit) { detectTapGestures { } }) {
         Column(Modifier.fillMaxSize()) {
@@ -255,6 +283,10 @@ private fun ChatDrawer(sel: String, contacts: List<Pair<String, String>>, onPick
                     Text("Chưa có liên hệ. Thêm trong Cài đặt › Liên hệ.", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                 }
                 contacts.forEach { (peer, name) -> DrawerItem(name, sel == peer, MessageStore.unread(peer), danger = false) { onPick(peer) } }
+                if (strangers.isNotEmpty()) {
+                    SectionHeader("Người lạ nhắn riêng (chỉ đọc)")
+                    strangers.forEach { peer -> DrawerItem("⚠ ${peer.take(8)}", sel == peer, MessageStore.unread(peer), danger = false) { onPick(peer) } }
+                }
             }
         }
     }
@@ -278,11 +310,11 @@ private fun DrawerItem(label: String, selected: Boolean, unread: Int, danger: Bo
 
 // ---------------------------------------------------------------- danh sách tin và ô nhập
 @Composable
-private fun MessageList(msgs: List<StoredMessage>, showSender: Boolean, modifier: Modifier) {
+private fun MessageList(msgs: List<StoredMessage>, showSender: Boolean, modifier: Modifier, flagUnpinned: Boolean = false) {
     val state = rememberLazyListState()
     LaunchedEffect(msgs.size) { if (msgs.isNotEmpty()) state.scrollToItem(msgs.size - 1) }      // tin mới nhất ở dưới cùng
     LazyColumn(modifier, state = state, contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(msgs, key = { it.id }) { m -> Bubble(m, showSender) }
+        items(msgs, key = { it.id }) { m -> Bubble(m, showSender, flagUnpinned) }
     }
 }
 
@@ -295,16 +327,19 @@ private fun stateLabel(m: StoredMessage): String = when {
 }
 
 @Composable
-private fun Bubble(m: StoredMessage, showSender: Boolean) {
+private fun Bubble(m: StoredMessage, showSender: Boolean, flagUnpinned: Boolean = false) {
     val c = MaterialTheme.colorScheme
     val me = m.outgoing
+    var viewer by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (me) Alignment.End else Alignment.Start) {
         Surface(shape = RoundedCornerShape(16.dp), color = if (me) c.primaryContainer else c.surface, border = BorderStroke(1.dp, c.outline.copy(alpha = 0.4f)), modifier = Modifier.widthIn(max = 280.dp)) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 if (showSender && !me) Text(nameOrId(m.src, m.pinned), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = c.primary)
+                // Tin nhận được lúc người gửi CHƯA có trong danh bạ (vd. nhắn trước khi mình thêm thẻ của họ): không thể xác minh lại về sau
+                if (flagUnpinned && !me && !m.pinned) Text("⚠ nhận khi chưa xác minh khóa người gửi", style = MaterialTheme.typography.labelSmall, color = c.error)
                 m.image?.let { name ->
                     val bmp = remember(name) { BitmapFactory.decodeFile(MessageStore.imageFile(name).path)?.asImageBitmap() }
-                    if (bmp != null) Image(bmp, contentDescription = "Ảnh", contentScale = ContentScale.Fit, modifier = Modifier.widthIn(max = 240.dp).heightIn(max = 240.dp))
+                    if (bmp != null) Image(bmp, contentDescription = "Ảnh", contentScale = ContentScale.Fit, modifier = Modifier.widthIn(max = 240.dp).heightIn(max = 240.dp).clickable { viewer = true })
                 }
                 // Giữ đè vào chữ để chọn và sao chép như văn bản bình thường trên điện thoại (chỉ chọn nội dung, không lẫn giờ gửi)
                 if (m.text.isNotEmpty()) SelectionContainer { Text(m.text) }
@@ -313,6 +348,39 @@ private fun Bubble(m: StoredMessage, showSender: Boolean) {
                     listOf(timeFmt.format(Date(m.tMs)), stateLabel(m)).filter { it.isNotEmpty() }.joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall, color = c.onSurfaceVariant.copy(alpha = 0.7f),
                 )
+            }
+        }
+    }
+    if (viewer && m.image != null) ImageViewerDialog(m) { viewer = false }
+}
+
+/** Xem ảnh lớn và lưu về máy (thư viện ảnh). Chạm vào ảnh trong tin nhắn để mở. */
+@Composable
+private fun ImageViewerDialog(m: StoredMessage, onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    val file = remember(m.image) { MessageStore.imageFile(m.image ?: "") }
+    val bmp = remember(file) { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }
+    val fileName = "OfflineMesh-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(m.tMs)) + ".jpg"
+    fun report(ok: Boolean) { Toast.makeText(ctx, if (ok) "Đã lưu ảnh vào máy" else "Không lưu được ảnh", Toast.LENGTH_SHORT).show() }
+    // Android 9 trở xuống: để người dùng chọn nơi lưu (không cần xin quyền ghi bộ nhớ)
+    val saveAs = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/jpeg")) { uri -> if (uri != null) report(ImageSaver.copyToUri(ctx, file, uri)) }
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = Color.Black) {
+            Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    if (bmp != null) Image(bmp, contentDescription = "Ảnh", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    else Text("Không mở được ảnh", color = Color.White)
+                }
+                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = onClose, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    ) { Text("Đóng") }
+                    Button(
+                        onClick = { if (ImageSaver.needsPicker) saveAs.launch(fileName) else report(ImageSaver.saveToGallery(ctx, file, fileName)) },
+                        enabled = bmp != null, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                    ) { Text("Lưu vào máy") }
+                }
             }
         }
     }
@@ -346,9 +414,85 @@ private fun PrivatePane(peer: String) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) MeshController.sendImage(peer, uri) }
     Column(Modifier.fillMaxSize()) {
         Text("Mã hóa đầu-cuối", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-        MessageList(msgs, showSender = false, modifier = Modifier.weight(1f).fillMaxWidth())
+        MessageList(msgs, showSender = false, modifier = Modifier.weight(1f).fillMaxWidth(), flagUnpinned = true)
         MeshController.state.notice?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 12.dp)) }
         InputBar(null, if (running) "Nhập tin nhắn…" else "Mesh chưa chạy", running, { MeshController.sendText(peer, it) }, { picker.launch("image/*") })
+    }
+}
+
+// ---------------------------------------------------------------- người lạ nhắn riêng (chỉ đọc)
+/**
+ * Người đã nhắn riêng cho mình nhưng chưa có trong danh bạ ghim khóa. Tin vẫn đọc được (đã giải mã bằng khóa của mình, chữ ký hợp lệ)
+ * nhưng chưa biết đó là ai, nên KHÔNG trả lời được. Đây là người tạm: xóa hoặc chặn được ngay tại đây.
+ */
+@Composable
+private fun StrangerPane(peer: String, onDelete: () -> Unit, onBlock: () -> Unit) {
+    val ver = MessageStore.version
+    val msgs = remember(peer, ver) { MessageStore.conversation(peer) }
+    val c = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxSize()) {
+        Surface(color = c.errorContainer) {
+            Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Tin RIÊNG gửi đúng cho bạn (mã hóa, chỉ máy bạn đọc được), khác tin công khai gửi cho mọi người. " +
+                        "Người gửi (mã ${peer.take(8)}) chưa có trong danh bạ nên bạn chưa biết khóa của họ, chưa xác minh được họ là ai. " +
+                        "Bạn chỉ đọc được, chưa trả lời được. Muốn nhắn lại, hãy gặp trực tiếp và thêm thẻ của họ (Cài đặt › Cá nhân).",
+                    style = MaterialTheme.typography.bodySmall, color = c.onErrorContainer,
+                )
+                if (AppSettings.contactsOnly) {
+                    Text(
+                        "Đang bật \"Chỉ nhận tin riêng từ danh bạ\": tin mới của người lạ sẽ không được lưu.",
+                        style = MaterialTheme.typography.labelSmall, color = c.onErrorContainer,
+                    )
+                }
+            }
+        }
+        MessageList(msgs, showSender = false, modifier = Modifier.weight(1f).fillMaxWidth())
+        Surface(color = c.surface, shadowElevation = 4.dp) {
+            Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Xóa người này") }
+                OutlinedButton(
+                    onClick = onBlock, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = c.error),
+                ) { Text("Chặn") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StrangerActionDialog(peer: String, block: Boolean, onClose: () -> Unit) {
+    val id = peer.take(8)
+    if (block) {
+        WarningDialog(
+            title = "Chặn người này?",
+            text = "Tin của ⚠ $id sẽ bị xóa khỏi máy này, và từ nay ứng dụng bỏ qua mọi tin riêng và tin công khai của họ.",
+            extra = "Tin SOS của họ vẫn được nhận để không bỏ sót người cần cứu. Bỏ chặn ở Cài đặt › Danh bạ ghim khóa.",
+            confirmText = "Chặn", danger = true, dismissText = "Hủy",
+            onConfirm = { _ ->
+                ContactsController.block(peer)
+                MessageStore.removePerson(peer)
+                ChatState.selected = "SOS"
+                onClose()
+            },
+            onDismiss = onClose,
+        )
+    } else {
+        WarningDialog(
+            title = "Xóa người này?",
+            text = "Cuộc trò chuyện với ⚠ $id sẽ bị xóa khỏi máy này. " + (
+                if (AppSettings.contactsOnly) "Đang bật \"Chỉ nhận tin riêng từ danh bạ\" nên nếu họ nhắn lại, tin sẽ bị bỏ qua."
+                else "Nếu họ nhắn lại, họ sẽ hiện lại ở đây."
+                ),
+            extra = "Muốn không nhận gì từ họ nữa, hãy chọn Chặn.",
+            confirmText = "Xóa", danger = true, dismissText = "Hủy",
+            onConfirm = { _ ->
+                MessageStore.deleteConversation(peer)
+                ChatState.selected = "SOS"
+                onClose()
+            },
+            onDismiss = onClose,
+        )
     }
 }
 
@@ -362,6 +506,11 @@ private fun PublicPane() {
     fun ask(action: () -> Unit) { if (AppSettings.warnPublicHidden) action() else pending = action }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) ask { MeshController.sendPublicImage(uri) } }
     Column(Modifier.fillMaxSize()) {
+        Text(
+            "Gửi cho mọi người, ai cũng đọc được. ✔ là người trong danh bạ, ⚠ là máy chưa xác minh. Đây không phải tin riêng gửi cho bạn.",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        )
         MessageList(msgs, showSender = true, modifier = Modifier.weight(1f).fillMaxWidth())
         MeshController.state.notice?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 12.dp)) }
         InputBar(

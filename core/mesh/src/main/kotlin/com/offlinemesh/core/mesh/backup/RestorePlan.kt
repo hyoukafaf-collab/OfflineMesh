@@ -28,6 +28,7 @@ sealed class PlanResult {
  */
 object RestorePlanner {
     const val MAX_IMAGE_BYTES = 2 * 1024 * 1024
+    private val PEER_HEX = Regex("[0-9a-f]{12}")
 
     private fun looksLikeJpeg(b: ByteArray) = b.size > 4 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte()
 
@@ -39,8 +40,11 @@ object RestorePlanner {
             ?.let { BackupContent.sanitize(it, BackupContent.CONTACTS_KEYS) }
             ?: return PlanResult.Bad("Bản sao lưu bị hỏng (danh bạ)")
         val contacts = contactItems.map { item ->
-            if (item.key != "cards") item
-            else PrefItem("cards", (item.value as? Set<*>).orEmpty().filterIsInstance<String>().filter { ContactCard.decode(it) != null }.toSet())
+            when (item.key) {
+                "cards" -> PrefItem("cards", (item.value as? Set<*>).orEmpty().filterIsInstance<String>().filter { ContactCard.decode(it) != null }.toSet())
+                "blocked" -> PrefItem("blocked", (item.value as? Set<*>).orEmpty().filterIsInstance<String>().filter { PEER_HEX.matches(it) }.toSet())     // chỉ nhận mã máy đúng dạng
+                else -> item
+            }
         }
         val settings = PrefsText.decode(byName[BackupContent.SETTINGS]?.data ?: ByteArray(0))
             ?.let { BackupContent.sanitize(it, BackupContent.SETTINGS_KEYS) }

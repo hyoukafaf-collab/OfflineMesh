@@ -10,7 +10,9 @@ import com.offlinemesh.core.mesh.backup.PrefsText
 import com.offlinemesh.core.mesh.backup.RestorePlanner
 import com.offlinemesh.core.mesh.crypto.ContactCard
 import com.offlinemesh.core.mesh.crypto.Identity
+import com.offlinemesh.core.mesh.history.InboundPolicy
 import com.offlinemesh.core.mesh.history.MessageCodec
+import com.offlinemesh.core.mesh.history.MessageLog
 import com.offlinemesh.core.mesh.history.StoredMessage
 import com.offlinemesh.core.mesh.payload.ImagePayload
 import com.offlinemesh.core.mesh.payload.SosFeed
@@ -290,5 +292,109 @@ class Week7bCoreTest {
         val plan = ok(RestorePlanner.plan(dec.entries))
         assertEquals(id.peerId, plan.identity.peerId)
         assertEquals(1, plan.messageCount)
+    }
+
+    // ---------- người chưa xác minh: danh sách, xóa, chặn ----------
+    private fun m(id: String, conv: String, out: Boolean, t: Long, src: String = "") =
+        StoredMessage(id, conv, out, "TEXT", "x", null, t, src = src)
+
+    @Test
+    fun privateConversationsListNewestFirstAndSkipSosAndPublic() {
+        val log = MessageLog()
+        log.add(m("1", "aaaaaaaaaaaa", false, 100, "aaaaaaaaaaaa"))
+        log.add(m("2", "bbbbbbbbbbbb", false, 300, "bbbbbbbbbbbb"))
+        log.add(m("3", "SOS", false, 900, "cccccccccccc"))
+        log.add(m("4", "PUBLIC", false, 800, "dddddddddddd"))
+        log.add(m("5", "aaaaaaaaaaaa", true, 200))
+        assertEquals(listOf("bbbbbbbbbbbb", "aaaaaaaaaaaa"), log.privateConvs())
+    }
+
+    @Test
+    fun removingAPersonKeepsTheirSosAndOtherPeople() {
+        val bad = "bbbbbbbbbbbb"; val good = "aaaaaaaaaaaa"
+        val log = MessageLog()
+        log.add(m("1", bad, false, 1, bad))
+        log.add(m("2", bad, true, 2))
+        log.add(m("3", "PUBLIC", false, 3, bad))
+        log.add(m("4", "PUBLIC", false, 4, good))
+        log.add(StoredMessage("5", "SOS", false, "SOS", "cứu", null, 5, src = bad, sosType = 0))
+        log.add(m("6", good, false, 6, good))
+        val gone = log.removePerson(bad)
+        assertEquals(setOf("1", "2", "3"), gone.map { it.id }.toSet())
+        assertEquals(setOf("4", "5", "6"), log.all().map { it.id }.toSet())     // SOS của người bị chặn vẫn còn
+        assertEquals(listOf(good), log.privateConvs())
+    }
+
+    @Test
+    fun deletingAConversationRemovesOnlyThatConversation() {
+        val log = MessageLog()
+        log.add(m("1", "aaaaaaaaaaaa", false, 1, "aaaaaaaaaaaa"))
+        log.add(m("2", "bbbbbbbbbbbb", false, 2, "bbbbbbbbbbbb"))
+        assertEquals(1, log.deleteConversation("aaaaaaaaaaaa").size)
+        assertEquals(listOf("bbbbbbbbbbbb"), log.privateConvs())
+    }
+
+    @Test
+    fun restoredBlockListOnlyKeepsWellFormedPeerIds() {
+        val data = PrefsText.encode(mapOf("blocked" to setOf("0123456789ab", "KHONG-HOP-LE", "0123456789ABCDEF00", "../x"), "my_name" to "Lan"))
+        val plan = ok(RestorePlanner.plan(planEntries().map { if (it.name == BackupContent.CONTACTS) BackupEntry(it.name, data) else it }))
+        val blocked = plan.contacts.single { it.key == "blocked" }.value as Set<*>
+        assertEquals(setOf("0123456789ab"), blocked)
+    }
+
+    // ---- tin công khai ≠ người lạ nhắn riêng ≠ người trong danh bạ ----
+    private val A = "aaaaaaaaaaaa"
+
+    private fun decide(
+        sos: Boolean = false, public: Boolean = false, contact: Boolean = false, pinned: Boolean = false,
+        blocked: Boolean = false, only: Boolean = false,
+    ) = InboundPolicy.decide(sos, public, A, contact, pinned, blocked, only)
+
+    private fun InboundPolicy.Decision.conv(): String? = (this as? InboundPolicy.Decision.Store)?.conv
+    private fun InboundPolicy.Decision.skipped(): InboundPolicy.Drop? = (this as? InboundPolicy.Decision.Skip)?.why
+
+    @Test
+    fun publicPostsGoToPublicWhoeverSendsThemAndAreNotAffectedByTheContactsOnlySwitch() {
+        for (only in listOf(false, true)) {
+            assertEquals("PUBLIC", decide(public = true, only = only).conv())                                   // người lạ đăng công khai
+            assertEquals("PUBLIC", decide(public = true, contact = true, pinned = true, only = only).conv())   // liên hệ đăng công khai
+        }
+        assertEquals(false, (decide(public = true) as InboundPolicy.Decision.Store).stranger)        // đăng công khai không phải "người lạ nhắn riêng"
+    }
+
+    @Test
+    fun aStrangersPrivateMessageStaysPrivateAndNeverGoesToPublic() {
+        val d = decide(public = false) as InboundPolicy.Decision.Store
+        assertEquals(A, d.conv)                    // cuộc trò chuyện riêng với người đó, KHÔNG phải "PUBLIC"
+        assertTrue(d.stranger)
+    }
+
+    @Test
+    fun contactsOnlySwitchDropsPrivateMessagesFromStrangersButKeepsContacts() {
+        assertEquals(InboundPolicy.Drop.STRANGER_NOT_ALLOWED, decide(only = true).skipped())
+        assertEquals(A, decide(contact = true, pinned = true, only = true).conv())
+        assertEquals(A, decide(only = false).conv())                                                     // công tắc tắt: người lạ vào mục "người lạ"
+    }
+
+    @Test
+    fun aContactsPeerIdWithAnotherKeyIsNeverFiledUnderThatContact() {
+        assertEquals(InboundPolicy.Drop.KEY_MISMATCH, decide(contact = true, pinned = false).skipped())
+        assertEquals(InboundPolicy.Drop.KEY_MISMATCH, decide(contact = true, pinned = false, only = true).skipped())
+    }
+
+    @Test
+    fun blockedPeopleAreSkippedButSosIsAlwaysAccepted() {
+        assertEquals(InboundPolicy.Drop.BLOCKED, decide(blocked = true).skipped())
+        assertEquals(InboundPolicy.Drop.BLOCKED, decide(public = true, blocked = true).skipped())
+        assertEquals("SOS", decide(sos = true, public = true, blocked = true, only = true).conv())
+        assertEquals("SOS", decide(sos = true, only = true).conv())
+    }
+
+    @Test
+    fun contactsOnlyIsPartOfTheBackupAllowListAsABoolean() {
+        assertEquals('b', BackupContent.SETTINGS_KEYS["contacts_only"])
+        val kept = BackupContent.sanitize(listOf(PrefItem("contacts_only", true), PrefItem("contacts_only_x", true)), BackupContent.SETTINGS_KEYS)
+        assertEquals(listOf("contacts_only"), kept.map { it.key })
+        assertTrue(BackupContent.sanitize(listOf(PrefItem("contacts_only", "yes")), BackupContent.SETTINGS_KEYS).isEmpty())   // sai kiểu thì bị loại
     }
 }

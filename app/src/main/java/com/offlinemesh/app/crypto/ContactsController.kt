@@ -96,6 +96,7 @@ data class ContactsUiState(
     val myCard: String = "",
     val myFingerprint: String = "",
     val contacts: List<ContactUi> = emptyList(),
+    val blocked: List<String> = emptyList(),
     val message: String? = null,
     val pendingRename: PendingRename? = null,
 )
@@ -114,11 +115,34 @@ object ContactsController {
     @Volatile
     var listener: ((ContactsUiState) -> Unit)? = null
 
+    /** Mã máy đã chặn (đọc được từ luồng mesh, nên là bản sao bất biến + @Volatile). */
+    @Volatile
+    private var blockedSet: Set<String> = emptySet()
+
+    private val PEER_HEX = Regex("[0-9a-f]{12}")
+
     fun init(ctx: Context) {
         val app = ctx.applicationContext
         identity = IdentityStore.get(app)
         prefs = app.getSharedPreferences("contacts", Context.MODE_PRIVATE)
         book = PrefsContactBook(prefs)
+        blockedSet = (prefs.getStringSet("blocked", emptySet()) ?: emptySet()).filter { PEER_HEX.matches(it) }.toSet()
+        refresh(null)
+    }
+
+    fun isBlocked(peerHex: String): Boolean = peerHex in blockedSet
+
+    /** Thêm vào danh sách chặn (chỉ ghi nhớ mã máy; việc xóa tin của họ do MessageStore làm). */
+    fun block(peerHex: String) {
+        if (!PEER_HEX.matches(peerHex) || peerHex == identity.peerId.hex) return
+        blockedSet = blockedSet + peerHex
+        prefs.edit().putStringSet("blocked", blockedSet).apply()
+        refresh(null)
+    }
+
+    fun unblock(peerHex: String) {
+        blockedSet = blockedSet - peerHex
+        prefs.edit().putStringSet("blocked", blockedSet).apply()
         refresh(null)
     }
 
@@ -130,6 +154,7 @@ object ContactsController {
             state = ContactsUiState(
                 myName = myName(), myCard = card.encode(), myFingerprint = card.fingerprint(),
                 contacts = book.all().map { ContactUi(it.peerId.hex, it.name, it.fingerprint()) },
+                blocked = blockedSet.sorted(),
                 message = message, pendingRename = pending,
             )
         }
