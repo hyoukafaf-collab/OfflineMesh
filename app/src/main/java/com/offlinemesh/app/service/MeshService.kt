@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.content.ContextCompat
 import com.offlinemesh.app.AppLog
+import com.offlinemesh.app.R
 import com.offlinemesh.app.mesh.MeshController
 import com.offlinemesh.app.mesh.MeshRuntime
 
@@ -65,7 +66,7 @@ class MeshService : Service() {
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Chạy nền", NotificationManager.IMPORTANCE_MIN))
         val n = Notification.Builder(this, CHANNEL)
             .setContentTitle("OfflineMesh")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setSmallIcon(R.drawable.ic_stat_mesh)
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 29) {

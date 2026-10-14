@@ -12,6 +12,7 @@ import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.offlinemesh.app.MainActivity
+import com.offlinemesh.app.R
 
 /**
  * Thông báo tin nhận được. Âm thanh của kênh không đổi được sau khi tạo, nên mỗi tổ hợp (tin/SOS × có/không âm) là một kênh riêng.
@@ -44,7 +45,7 @@ object Notifier {
         val channel = (if (sos) "sos_" else "msg_") + (if (sound) "sound" else "silent")
         val open = PendingIntent.getActivity(app, 0, Intent(app, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = android.app.Notification.Builder(app, channel)
-            .setSmallIcon(if (sos) android.R.drawable.ic_dialog_alert else android.R.drawable.stat_notify_chat)
+            .setSmallIcon(if (sos) android.R.drawable.ic_dialog_alert else R.drawable.ic_stat_mesh)
             .setContentTitle(title).setContentText(body).setContentIntent(open).setAutoCancel(true).build()
         app.getSystemService(NotificationManager::class.java).notify(nextId++, n)
     }
