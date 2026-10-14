@@ -95,14 +95,21 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
 
-/** Trạng thái giao diện chat: mục đang chọn ("SOS", "PUBLIC" hoặc PeerId của liên hệ) và thanh công cụ thu gọn (chỉ máy màn rộng). */
+/**
+ * Trạng thái giao diện chat: mục đang chọn ("SOS", "PUBLIC" hoặc PeerId của liên hệ) và việc ẩn thanh dọc trên máy màn rộng.
+ * `collapsed` = true: thanh dọc ẩn HẲN (không còn dải hẹp), chỉ còn nút ba gạch ở góc trái thanh trên để mở lại.
+ */
 object ChatState {
     var selected by mutableStateOf("SOS")
     var collapsed by mutableStateOf(false)
     fun viewing(): String? = if (AppGate.foreground) selected else null
 }
 
-/** Từ độ rộng này (dp) trở lên là màn rộng (máy tính bảng): thanh dọc luôn hiện. Dưới mức này (điện thoại) thanh ẩn hẳn, mở bằng nút ba gạch. */
+/**
+ * Từ cạnh NGẮN này (dp) trở lên là màn rộng (máy tính bảng, gập mở): thanh dọc hiện sẵn nhưng ẩn hẳn được bằng nút ba gạch.
+ * Dưới mức này (điện thoại, kể cả khi xoay ngang) thanh luôn ẩn, mở bằng nút ba gạch thành ngăn kéo.
+ * Dùng cạnh ngắn (smallestScreenWidthDp) để điện thoại xoay ngang không bị nhận nhầm là máy tính bảng.
+ */
 private const val WIDE_DP = 600
 
 private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -121,7 +128,7 @@ fun ChatScreen(openSettings: () -> Unit) {
     val contacts = ContactsController.state.contacts
     val ver = MessageStore.version
     val sel = ChatState.selected
-    val wide = LocalConfiguration.current.screenWidthDp >= WIDE_DP
+    val wide = LocalConfiguration.current.smallestScreenWidthDp >= WIDE_DP
     var menu by remember { mutableStateOf(false) }
     var drawer by remember { mutableStateOf(false) }
     var deleteDialog by remember { mutableStateOf(false) }
@@ -144,10 +151,11 @@ fun ChatScreen(openSettings: () -> Unit) {
         else -> contacts.firstOrNull { it.peer == sel }?.name ?: "Tin nhắn"
     }
     // Chấm đỏ trên nút ba gạch: có tin chưa đọc ở một mục khác với mục đang xem
-    val otherUnread = (ver >= 0) && (listOf("SOS", "PUBLIC") + contactPeers + strangers).any { it != sel && MessageStore.unread(it) > 0 }
+    val otherUnread = (ver >= 0) && (!wide || ChatState.collapsed) && (listOf("SOS", "PUBLIC") + contactPeers + strangers).any { it != sel && MessageStore.unread(it) > 0 }
     // Chạm ra ngoài ô nhập thì tắt bàn phím (các nút/ô nhập tự nhận chạm của chúng trước)
     Column(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { focus.clearFocus() } }) {
-        TopBar(title, onMenu = if (wide) null else ({ drawer = true }), menuBadge = otherUnread, actions = {
+        // Nút ba gạch luôn có: điện thoại mở ngăn kéo, máy màn rộng ẩn/hiện hẳn thanh dọc
+        TopBar(title, onMenu = { if (wide) { ChatState.collapsed = !ChatState.collapsed } else { drawer = true } }, menuBadge = otherUnread, actions = {
             val near = (mesh.seen + mesh.linked).distinct().size
             if (near > 0) Text("$near máy gần", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 4.dp))
             Box {
@@ -175,7 +183,7 @@ fun ChatScreen(openSettings: () -> Unit) {
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             Row(Modifier.fillMaxSize()) {
-                if (wide) Rail(sel, contacts.map { it.peer to it.name }, strangers)
+                if (wide && !ChatState.collapsed) Rail(sel, contacts.map { it.peer to it.name }, strangers)
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     when {
                         sel == "SOS" -> SosPane()
@@ -221,20 +229,19 @@ private fun DeleteOldDialog(conv: String, onDone: () -> Unit) {
 // ---------------------------------------------------------------- danh sách mục: thanh dọc (màn rộng) và ngăn kéo (điện thoại)
 @Composable
 private fun Rail(sel: String, contacts: List<Pair<String, String>>, strangers: List<String>) {
-    val collapsed = ChatState.collapsed
-    Column(Modifier.width(if (collapsed) 48.dp else 88.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface)) {
-        RailItem("SOS", "SOS", sel == "SOS", MessageStore.unread("SOS"), danger = true, collapsed = collapsed)
-        RailItem("PUBLIC", "Công khai", sel == "PUBLIC", MessageStore.unread("PUBLIC"), danger = false, collapsed = collapsed)
+    // Thu gọn = ẩn hẳn thanh (nút ba gạch ở thanh trên), nên ở đây không còn dải hẹp hay nút tam giác
+    Column(Modifier.width(88.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface)) {
+        RailItem("SOS", "SOS", sel == "SOS", MessageStore.unread("SOS"), danger = true)
+        RailItem("PUBLIC", "Công khai", sel == "PUBLIC", MessageStore.unread("PUBLIC"), danger = false)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            contacts.forEach { (peer, name) -> RailItem(peer, name, sel == peer, MessageStore.unread(peer), danger = false, collapsed = collapsed) }
-            strangers.forEach { peer -> RailItem(peer, "⚠ ${peer.take(6)}", sel == peer, MessageStore.unread(peer), danger = false, collapsed = collapsed) }      // người lạ nhắn riêng
+            contacts.forEach { (peer, name) -> RailItem(peer, name, sel == peer, MessageStore.unread(peer), danger = false) }
+            strangers.forEach { peer -> RailItem(peer, "⚠ ${peer.take(6)}", sel == peer, MessageStore.unread(peer), danger = false) }      // người lạ nhắn riêng
         }
-        TextButton(onClick = { ChatState.collapsed = !collapsed }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text(if (collapsed) "›" else "‹", fontSize = 22.sp) }
     }
 }
 
 @Composable
-private fun RailItem(key: String, label: String, selected: Boolean, unread: Int, danger: Boolean, collapsed: Boolean) {
+private fun RailItem(key: String, label: String, selected: Boolean, unread: Int, danger: Boolean) {
     val c = MaterialTheme.colorScheme
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp).background(if (selected) c.primaryContainer else c.surface)
@@ -242,12 +249,12 @@ private fun RailItem(key: String, label: String, selected: Boolean, unread: Int,
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
-            if (collapsed) label.take(1) else label.take(9), maxLines = 1, fontWeight = FontWeight.SemiBold,
+            label.take(9), maxLines = 1, fontWeight = FontWeight.SemiBold,
             color = if (danger) c.error else c.onSurface, style = MaterialTheme.typography.bodyMedium,
         )
         if (unread > 0) {
             Surface(shape = RoundedCornerShape(10.dp), color = if (danger) c.error else c.primary) {
-                Text(if (collapsed) "" else "$unread", color = if (danger) c.onError else c.onPrimary, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = if (collapsed) 4.dp else 6.dp, vertical = 2.dp))
+                Text("$unread", color = if (danger) c.onError else c.onPrimary, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
             }
         }
     }
@@ -435,8 +442,8 @@ private fun StrangerPane(peer: String, onDelete: () -> Unit, onBlock: () -> Unit
             Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     "Tin RIÊNG gửi đúng cho bạn (mã hóa, chỉ máy bạn đọc được), khác tin công khai gửi cho mọi người. " +
-                        "Người gửi (mã ${peer.take(8)}) chưa có trong danh bạ nên bạn chưa biết khóa của họ, chưa xác minh được họ là ai. " +
-                        "Bạn chỉ đọc được, chưa trả lời được. Muốn nhắn lại, hãy gặp trực tiếp và thêm thẻ của họ (Cài đặt › Cá nhân).",
+                            "Người gửi (mã ${peer.take(8)}) chưa có trong danh bạ nên bạn chưa biết khóa của họ, chưa xác minh được họ là ai. " +
+                            "Bạn chỉ đọc được, chưa trả lời được. Muốn nhắn lại, hãy gặp trực tiếp và thêm thẻ của họ (Cài đặt › Cá nhân).",
                     style = MaterialTheme.typography.bodySmall, color = c.onErrorContainer,
                 )
                 if (AppSettings.contactsOnly) {
@@ -481,9 +488,9 @@ private fun StrangerActionDialog(peer: String, block: Boolean, onClose: () -> Un
         WarningDialog(
             title = "Xóa người này?",
             text = "Cuộc trò chuyện với ⚠ $id sẽ bị xóa khỏi máy này. " + (
-                if (AppSettings.contactsOnly) "Đang bật \"Chỉ nhận tin riêng từ danh bạ\" nên nếu họ nhắn lại, tin sẽ bị bỏ qua."
-                else "Nếu họ nhắn lại, họ sẽ hiện lại ở đây."
-                ),
+                    if (AppSettings.contactsOnly) "Đang bật \"Chỉ nhận tin riêng từ danh bạ\" nên nếu họ nhắn lại, tin sẽ bị bỏ qua."
+                    else "Nếu họ nhắn lại, họ sẽ hiện lại ở đây."
+                    ),
             extra = "Muốn không nhận gì từ họ nữa, hãy chọn Chặn.",
             confirmText = "Xóa", danger = true, dismissText = "Hủy",
             onConfirm = { _ ->
